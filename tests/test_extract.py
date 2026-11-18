@@ -40,11 +40,11 @@ def attempts(conn, etapa="extract"):
 def product(conn):
     row = conn.execute("SELECT * FROM produtos").fetchone()
     return {
-        "status": row["status"],
+        "extracao": row["extracao"],
         "categoria": row["categoria"],
         "campos": json.loads(row["campos"]),
         "duvidas": json.loads(row["duvidas"]),
-        "motivos": json.loads(row["motivos"]),
+        "erros": json.loads(row["erros"]),
     }
 
 
@@ -65,7 +65,8 @@ def test_happy_path(tmp_path, monkeypatch):
         classification, fields = split_answer_key(SHEETS[sheet_id]["gabarito"])
         assert row["categoria"] == classification["categoria"]
         assert json.loads(row["campos"]) == fields
-        assert (row["status"], row["duvidas"], row["motivos"]) == ("valido", "[]", "[]")
+        assert (row["extracao"], row["duvidas"], row["erros"]) == ("valido", "[]", "[]")
+        assert row["destino"] is None  # o roteamento é do route.py
         assert row["versao_esquema"] == SCHEMA_VERSION
     statuses = conn.execute("SELECT DISTINCT status FROM fichas").fetchall()
     assert [row["status"] for row in statuses] == ["processada"]
@@ -96,7 +97,7 @@ def test_value_error_fixed_on_second_attempt(tmp_path, monkeypatch):
     assert first["garantia_meses"] == WRONG_WARRANTY
     assert error == "\n".join(issue.message for issue in issues)
     assert (number, second["garantia_meses"], no_error) == (2, 36, None)
-    assert product(conn)["status"] == "valido"
+    assert product(conn)["extracao"] == "valido"
     assert (summary.valid, summary.retries) == (1, 1)
 
     # A correção leva a ficha, a resposta errada e a mensagem exata num tool_result com is_error.
@@ -119,7 +120,7 @@ def test_classification_error_fixed_on_second_attempt(tmp_path, monkeypatch):
     assert first == {"categoria": "fonte", "categoria_detalhe": WRONG_DETAIL}
     assert error == "\n".join(issue.message for issue in validate_classification(first))
     assert (number, second, no_error) == (2, {"categoria": "fonte", "categoria_detalhe": None}, None)
-    assert (product(conn)["status"], product(conn)["categoria"]) == ("valido", "fonte")
+    assert (product(conn)["extracao"], product(conn)["categoria"]) == ("valido", "fonte")
     assert (summary.calls, summary.retries) == (3, 1)
 
     # A mesma conversa de correção da extração: a ficha, a resposta errada e a mensagem exata.
@@ -140,9 +141,9 @@ def test_error_that_persists_is_marked(tmp_path, monkeypatch):
         (3, True),
     ]
     saved = product(conn)
-    assert saved["status"] == "reprovado"
+    assert saved["extracao"] == "reprovado"
     assert saved["campos"]["garantia_meses"] == WRONG_WARRANTY
-    assert saved["motivos"] == [
+    assert saved["erros"] == [
         {"campo": issue.field, "mensagem": issue.message}
         for issue in wrong_warranty_issues("dev-030")
     ]
@@ -155,7 +156,7 @@ def test_cut_answer_is_resent_with_more_tokens(tmp_path, monkeypatch):
     [(_, cut, error), (_, complete, no_error)] = attempts(conn)
     assert "duvidas" not in cut and "max_tokens" in error
     assert complete["duvidas"] == [] and no_error is None
-    assert product(conn)["status"] == "valido"
+    assert product(conn)["extracao"] == "valido"
     # O mesmo pedido, sem conversa de correção, só com mais tokens.
     assert sent[1]["max_tokens"] == EXTRACT_MAX_TOKENS
     assert sent[2]["max_tokens"] == EXTRACT_RETRY_MAX_TOKENS
@@ -192,9 +193,13 @@ def test_cli_processes_all_sheets_with_the_fake_api(tmp_path, capsys):
     cli.main(["--db", db_file, "process", "--direto", "--fake"])
 
     lines = capsys.readouterr().out.splitlines()
-    assert lines[-1].startswith("resumo: 83 fichas | 83 válidas | 0 reprovadas | 166 chamadas")
+    assert lines[-2].startswith("resumo: 83 fichas | 83 válidas | 0 reprovadas | 166 chamadas")
     # O custo de cada chamada sai impresso logo depois da resposta.
     assert sum("| cost: $" in line for line in lines) == 166
     conn = db.connect(db_file)
-    assert conn.execute("SELECT COUNT(*) FROM produtos WHERE status = 'valido'").fetchone()[0] == 83
+    valid = conn.execute("SELECT COUNT(*) FROM produtos WHERE extracao = 'valido'").fetchone()[0]
+    assert valid == 83
     assert db.pending_sheets(conn) == []
+    # No fim, o roteamento: nenhum produto fica sem destino.
+    assert lines[-1].startswith("roteamento: 83 produtos | ")
+    assert conn.execute("SELECT COUNT(*) FROM produtos WHERE destino IS NULL").fetchone()[0] == 0

@@ -42,10 +42,10 @@ def custom_ids(sent):
 def product(conn, ficha_id=1):
     row = conn.execute("SELECT * FROM produtos WHERE ficha_id = ?", (ficha_id,)).fetchone()
     return {
-        "status": row["status"],
+        "extracao": row["extracao"],
         "categoria": row["categoria"],
         "campos": json.loads(row["campos"]),
-        "motivos": json.loads(row["motivos"]),
+        "erros": json.loads(row["erros"]),
     }
 
 
@@ -79,7 +79,7 @@ def test_results_out_of_order_are_matched_by_custom_id(tmp_path, monkeypatch, ca
         classification, fields = split_answer_key(SHEETS[sheet_id]["gabarito"])
         saved = product(conn, ficha_id)
         assert (saved["categoria"], saved["campos"]) == (classification["categoria"], fields)
-        assert saved["status"] == "valido"
+        assert saved["extracao"] == "valido"
     assert numbers(summary) == (3, 3, 0, 6, 0)
 
     # O pedido é o mesmo do modo direto.
@@ -141,7 +141,7 @@ def test_cut_answer_is_resent_with_more_tokens(tmp_path, monkeypatch):
     [(cut, error), (whole, no_error)] = rows.fetchall()
     assert cut == "max_tokens" and "max_tokens" in error
     assert (whole, no_error) == ("tool_use", None)
-    assert product(conn)["status"] == "valido"
+    assert product(conn)["extracao"] == "valido"
     assert numbers(summary) == (1, 1, 0, 3, 1)
 
 
@@ -166,7 +166,7 @@ def test_value_error_fixed_by_a_correction_batch(tmp_path, monkeypatch):
         }
     ]
     saved = product(conn)
-    assert (saved["status"], saved["campos"]["garantia_meses"]) == ("valido", 36)
+    assert (saved["extracao"], saved["campos"]["garantia_meses"]) == ("valido", 36)
     assert numbers(summary) == (1, 1, 0, 3, 1)
 
 
@@ -177,8 +177,8 @@ def test_error_that_persists_is_marked(tmp_path, monkeypatch):
     # A 2ª correção leva a conversa inteira: a ficha e as duas respostas erradas com os erros.
     assert len(sent[3]["f001-extract-3"]["messages"]) == 5
     saved = product(conn)
-    assert saved["status"] == "reprovado"
-    assert saved["motivos"] == [
+    assert saved["extracao"] == "reprovado"
+    assert saved["erros"] == [
         {"campo": issue.field, "mensagem": issue.message} for issue in wrong_warranty("dev-030")[1]
     ]
     assert numbers(summary) == (1, 0, 1, 4, 2)
@@ -222,7 +222,7 @@ def test_interrupted_run_resumes_the_pending_batch(tmp_path, monkeypatch, capsys
     pending_id = conn.execute("SELECT id FROM lotes ORDER BY rowid").fetchall()[1][0]
     assert f"lote {pending_id} já enviado: esperando o resultado" in out
     assert [row[0] for row in conn.execute("SELECT status FROM lotes")] == ["concluido"] * 2
-    assert [product(conn, ficha_id)["status"] for ficha_id in (1, 2)] == ["valido"] * 2
+    assert [product(conn, ficha_id)["extracao"] for ficha_id in (1, 2)] == ["valido"] * 2
     assert numbers(summary) == (2, 2, 0, 4, 0)
     assert conn.execute("SELECT COUNT(*) FROM rodadas").fetchone()[0] == 1
     assert waits == [30, 30]
@@ -277,10 +277,13 @@ def test_cli_processes_all_sheets_in_batches_with_the_fake_api(tmp_path, capsys)
     cli.main(["--db", db_file, "process", "--lote", "--fake"])
 
     lines = capsys.readouterr().out.splitlines()
-    assert lines[-1].startswith("resumo: 83 fichas | 83 válidas | 0 reprovadas | 166 chamadas")
+    assert lines[-2].startswith("resumo: 83 fichas | 83 válidas | 0 reprovadas | 166 chamadas")
     assert sum("| cost: $" in line for line in lines) == 166
     conn = db.connect(db_file)
     assert db.pending_sheets(conn) == []
+    # No fim, o roteamento: nenhum produto fica sem destino.
+    assert lines[-1].startswith("roteamento: 83 produtos | ")
+    assert conn.execute("SELECT COUNT(*) FROM produtos WHERE destino IS NULL").fetchone()[0] == 0
     assert [tuple(row) for row in conn.execute("SELECT status, COUNT(*) FROM lotes")] == [
         ("concluido", 2)
     ]

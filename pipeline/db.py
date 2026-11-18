@@ -54,13 +54,23 @@ CREATE TABLE IF NOT EXISTS produtos (
     categoria TEXT NOT NULL,
     campos TEXT NOT NULL,               -- JSON: os campos de PRODUCT_MODELS[categoria]
     duvidas TEXT NOT NULL,              -- JSON: [{campo, nivel, motivo}]
-    -- Depois da extração: 'valido' (passou no esquema e nas regras) ou 'reprovado' (continuou com
-    -- erro depois das tentativas). O roteamento troca por catálogo, fila de revisão ou rejeitado.
-    status TEXT NOT NULL,
-    motivos TEXT NOT NULL,              -- JSON: por que foi para a revisão ([] se não foi); no
-                                        -- 'reprovado', os erros [{campo, mensagem}] que sobraram
-    auditoria INTEGER NOT NULL DEFAULT 0,  -- 1 se caiu no sorteio da auditoria
     versao_esquema INTEGER NOT NULL,    -- versão dos campos com que foi extraído
+    -- O resultado da extração, gravado por ela:
+    extracao TEXT NOT NULL,             -- 'valido' (passou no esquema e nas regras) ou 'reprovado'
+                                        -- (continuou com erro depois das tentativas)
+    erros TEXT NOT NULL,                -- JSON: os erros que sobraram, [{campo, mensagem}] ([] no
+                                        -- válido). O campo pode não ser do produto: 'categoria' e
+                                        -- 'categoria_detalhe' (da classificação), 'max_tokens'
+                                        -- (cortada), 'tool_use' e 'lote' (sem resposta)
+    -- O destino, gravado pelo roteamento (route.py). Uma nova extração volta o destino para null.
+    destino TEXT,                       -- null até o roteamento; depois 'catalogo' ou 'revisao'. A
+                                        -- decisão humana troca 'revisao' por 'catalogo' (aprovado)
+                                        -- ou 'rejeitado', e o histórico fica em `revisoes`
+    motivos TEXT NOT NULL DEFAULT '[]', -- JSON: por que o roteamento mandou para a revisão
+                                        -- ('reprovado', 'duvida_baixa', 'auditoria'); [] no
+                                        -- catálogo. Não muda com a decisão humana
+    auditoria INTEGER NOT NULL DEFAULT 0,  -- 1 se já caiu no sorteio da auditoria: não entra em
+                                           -- outro sorteio, nem depois de uma nova extração
     atualizado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -188,29 +198,33 @@ def save_product(
     categoria: str,
     campos: dict,
     duvidas: list,
-    status: str,
-    motivos: list,
+    extracao: str,
+    erros: list,
 ) -> None:
     """Grava o produto da ficha (ou troca o que já existia) e tira a ficha das pendentes.
+
+    O produto fica sem destino, à espera do roteamento. `auditoria` não muda: quem já foi
+    sorteado não é sorteado de novo.
 
     `ON CONFLICT ... DO UPDATE` atualiza a linha no lugar. `INSERT OR REPLACE` apagaria a linha, e
     com as revisões apontando para ela a chave estrangeira falharia.
     """
     conn.execute(
-        "INSERT INTO produtos (ficha_id, categoria, campos, duvidas, status, motivos, "
-        "versao_esquema) VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "INSERT INTO produtos (ficha_id, categoria, campos, duvidas, versao_esquema, extracao, "
+        "erros) VALUES (?, ?, ?, ?, ?, ?, ?) "
         "ON CONFLICT (ficha_id) DO UPDATE SET categoria = excluded.categoria, "
-        "campos = excluded.campos, duvidas = excluded.duvidas, status = excluded.status, "
-        "motivos = excluded.motivos, versao_esquema = excluded.versao_esquema, "
+        "campos = excluded.campos, duvidas = excluded.duvidas, "
+        "versao_esquema = excluded.versao_esquema, extracao = excluded.extracao, "
+        "erros = excluded.erros, destino = NULL, motivos = '[]', "
         "atualizado_em = CURRENT_TIMESTAMP",
         (
             ficha_id,
             categoria,
             json.dumps(campos, ensure_ascii=False),
             json.dumps(duvidas, ensure_ascii=False),
-            status,
-            json.dumps(motivos, ensure_ascii=False),
             SCHEMA_VERSION,
+            extracao,
+            json.dumps(erros, ensure_ascii=False),
         ),
     )
     conn.execute("UPDATE fichas SET status = 'processada' WHERE id = ?", (ficha_id,))
@@ -264,9 +278,46 @@ def round_totals(conn: sqlite3.Connection, rodada_id: int) -> sqlite3.Row:
     """Os números de uma rodada: fichas, válidas, reprovadas, chamadas, novas tentativas e custo."""
     return conn.execute(
         "SELECT COUNT(DISTINCT t.ficha_id) AS fichas, "
-        "COUNT(DISTINCT CASE WHEN p.status = 'valido' THEN t.ficha_id END) AS validas, "
-        "COUNT(DISTINCT CASE WHEN p.status = 'reprovado' THEN t.ficha_id END) AS reprovadas, "
+        "COUNT(DISTINCT CASE WHEN p.extracao = 'valido' THEN t.ficha_id END) AS validas, "
+        "COUNT(DISTINCT CASE WHEN p.extracao = 'reprovado' THEN t.ficha_id END) AS reprovadas, "
         "COUNT(*) AS chamadas, TOTAL(t.numero > 1) AS novas_tentativas, TOTAL(t.custo) AS custo "
         "FROM tentativas t LEFT JOIN produtos p ON p.ficha_id = t.ficha_id WHERE t.rodada_id = ?",
         (rodada_id,),
     ).fetchone()
+
+
+def rounds(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """As rodadas, da primeira à última: id, modo e quando começou (hora local)."""
+    return conn.execute(
+        "SELECT id, modo, datetime(criado_em, 'localtime') AS criado_em FROM rodadas ORDER BY id"
+    ).fetchall()
+
+
+# --- Roteamento.
+
+
+def unrouted_products(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Os produtos ainda sem destino (os que acabaram de ser extraídos), na ordem das fichas."""
+    return conn.execute(
+        "SELECT ficha_id, categoria, duvidas, extracao, auditoria FROM produtos "
+        "WHERE destino IS NULL ORDER BY ficha_id"
+    ).fetchall()
+
+
+def set_route(
+    conn: sqlite3.Connection, ficha_id: int, destino: str, motivos: list, audited: bool
+) -> None:
+    """Grava o destino e os motivos de um produto, sem commit. A auditoria só passa de 0 para 1."""
+    conn.execute(
+        "UPDATE produtos SET destino = ?, motivos = ?, auditoria = MAX(auditoria, ?) "
+        "WHERE ficha_id = ?",
+        (destino, json.dumps(motivos), int(audited), ficha_id),
+    )
+
+
+def product_routes(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """O roteamento de todos os produtos (categoria, destino, motivos e auditoria), para as
+    contagens e para a cota da auditoria."""
+    return conn.execute(
+        "SELECT ficha_id, categoria, destino, motivos, auditoria FROM produtos"
+    ).fetchall()

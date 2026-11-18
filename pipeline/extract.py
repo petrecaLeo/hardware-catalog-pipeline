@@ -35,6 +35,7 @@ STAGES = ("classify", "extract")
 PROMPTS = {stage: (PROMPTS_DIR / f"{stage}.md").read_text(encoding="utf-8") for stage in STAGES}
 MAX_TOKENS = {"classify": CLASSIFY_MAX_TOKENS, "extract": EXTRACT_MAX_TOKENS}
 RETRY_MAX_TOKENS = {"classify": CLASSIFY_RETRY_MAX_TOKENS, "extract": EXTRACT_RETRY_MAX_TOKENS}
+DOUBT_KEYS = {"campo", "nivel", "motivo"}
 
 CORRECTION = (
     "A resposta não passou na validação:\n{errors}\n"
@@ -220,14 +221,18 @@ def extract_sheet(client, text: str) -> SheetResult:
 
 
 def store_product(conn, ficha_id: int, result: SheetResult) -> None:
-    """Grava o produto da ficha, sem commit: os campos, as dúvidas, o status e os motivos."""
+    """Grava o produto da ficha, sem commit: os campos, as dúvidas e o resultado da extração
+    (válido ou reprovado, com os erros que sobraram). O destino fica para o roteamento."""
     fields = dict(result.extraction.data or {})
+    # Uma resposta cortada pode vir sem as dúvidas, ou com a última pela metade: ficam só as
+    # completas, que o roteamento e a tela leem.
     doubts = fields.pop("duvidas", None)
-    if not isinstance(doubts, list):  # resposta cortada pode vir sem as dúvidas
+    if not isinstance(doubts, list):
         doubts = []
-    status = "reprovado" if result.issues else "valido"
-    reasons = [{"campo": issue.field, "mensagem": issue.message} for issue in result.issues]
-    db.save_product(conn, ficha_id, result.category, fields, doubts, status, reasons)
+    doubts = [doubt for doubt in doubts if isinstance(doubt, dict) and DOUBT_KEYS <= doubt.keys()]
+    extraction = "reprovado" if result.issues else "valido"
+    errors = [{"campo": issue.field, "mensagem": issue.message} for issue in result.issues]
+    db.save_product(conn, ficha_id, result.category, fields, doubts, extraction, errors)
 
 
 def save_result(conn, rodada_id: int, ficha_id: int, result: SheetResult) -> None:
