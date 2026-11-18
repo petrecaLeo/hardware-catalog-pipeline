@@ -27,3 +27,5 @@ CLASSIFY_RETRY_MAX_TOKENS = 300
 EXTRACT_RETRY_MAX_TOKENS = 900
 # Depois da primeira resposta, quantas vezes a ficha volta ao modelo com o erro de validação.
 EXTRA_ATTEMPTS = 2
+# Modo lote: de quantos em quantos segundos o lote é consultado até terminar (0 com a API falsa).
+BATCH_POLL_SECONDS = 30

@@ -38,6 +38,8 @@ CREATE TABLE IF NOT EXISTS tentativas (
     etapa TEXT NOT NULL,                -- 'classify' ou 'extract'
     numero INTEGER NOT NULL,            -- 1 = primeira resposta; depois, as correções
     resposta TEXT,                      -- JSON: o input da ferramenta (null se a chamada falhou)
+    stop_reason TEXT,                   -- da resposta ('tool_use', 'max_tokens'...); null se não
+                                        -- houve resposta (pedido do lote com errored ou expired)
     erro TEXT,                          -- erro de validação ou da API (null se passou)
     tokens_entrada INTEGER NOT NULL,    -- só a parte sem cache; 0 se a chamada falhou sem resposta
     tokens_saida INTEGER NOT NULL,
@@ -72,13 +74,15 @@ CREATE TABLE IF NOT EXISTS revisoes (
     criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Os lotes enviados à API, para retomar um que ainda não terminou.
+-- Os lotes enviados à API, para retomar um que ainda não terminou. Um lote pode misturar as
+-- etapas: o custom_id ('f042-extract-1') diz a ficha, a etapa e a tentativa de cada pedido.
 CREATE TABLE IF NOT EXISTS lotes (
     id TEXT PRIMARY KEY,                -- id do lote na API
     rodada_id INTEGER NOT NULL REFERENCES rodadas (id),
-    etapa TEXT NOT NULL,                -- 'classify' ou 'extract'
     custom_ids TEXT NOT NULL,           -- JSON: lista dos custom_id enviados
-    status TEXT NOT NULL,               -- pendente até os resultados serem salvos
+    -- 'pendente' até os resultados serem salvos; depois 'concluido'. 'perdido' se a API não tem
+    -- mais o lote (404): os pedidos dele vão de novo num lote novo.
+    status TEXT NOT NULL,
     criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 """
@@ -151,21 +155,23 @@ def add_attempt(
     etapa: str,
     numero: int,
     resposta: dict | None,
+    stop_reason: str | None,
     erro: str | None,
     usage,
     custo: float,
 ) -> None:
     """Guarda uma chamada ao modelo. `usage` é o `message.usage` da resposta."""
     conn.execute(
-        "INSERT INTO tentativas (ficha_id, rodada_id, etapa, numero, resposta, erro, "
+        "INSERT INTO tentativas (ficha_id, rodada_id, etapa, numero, resposta, stop_reason, erro, "
         "tokens_entrada, tokens_saida, tokens_cache_escrita, tokens_cache_leitura, custo) "
-        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (
             ficha_id,
             rodada_id,
             etapa,
             numero,
             None if resposta is None else json.dumps(resposta, ensure_ascii=False),
+            stop_reason,
             erro,
             usage.input_tokens,
             usage.output_tokens,
@@ -208,3 +214,59 @@ def save_product(
         ),
     )
     conn.execute("UPDATE fichas SET status = 'processada' WHERE id = ?", (ficha_id,))
+
+
+# --- Lotes.
+
+
+def round_attempts(conn: sqlite3.Connection, rodada_id: int, ficha_id: int) -> list[sqlite3.Row]:
+    """As tentativas de uma ficha numa rodada, na ordem em que foram feitas."""
+    return conn.execute(
+        "SELECT * FROM tentativas WHERE rodada_id = ? AND ficha_id = ? ORDER BY id",
+        (rodada_id, ficha_id),
+    ).fetchall()
+
+
+def add_batch(conn: sqlite3.Connection, lote_id: str, rodada_id: int, custom_ids: list) -> None:
+    """Guarda um lote recém-enviado, como 'pendente'."""
+    with conn:
+        conn.execute(
+            "INSERT INTO lotes (id, rodada_id, custom_ids, status) VALUES (?, ?, ?, 'pendente')",
+            (lote_id, rodada_id, json.dumps(custom_ids)),
+        )
+
+
+def set_batch_status(conn: sqlite3.Connection, lote_id: str, status: str) -> None:
+    """Troca o status do lote. Não faz commit: vai junto com os resultados que foram salvos."""
+    conn.execute("UPDATE lotes SET status = ? WHERE id = ?", (status, lote_id))
+
+
+def pending_batch(conn: sqlite3.Connection, rodada_id: int) -> str | None:
+    """O id do lote da rodada que foi enviado e ainda não teve os resultados salvos, ou None."""
+    row = conn.execute(
+        "SELECT id FROM lotes WHERE rodada_id = ? AND status = 'pendente'", (rodada_id,)
+    ).fetchone()
+    return None if row is None else row["id"]
+
+
+def last_batch_round(conn: sqlite3.Connection) -> tuple[int | None, list[str]]:
+    """A última rodada que enviou lotes e todos os custom_id enviados nela."""
+    rows = conn.execute(
+        "SELECT rodada_id, custom_ids FROM lotes "
+        "WHERE rodada_id = (SELECT MAX(rodada_id) FROM lotes) ORDER BY rowid"
+    ).fetchall()
+    if not rows:
+        return None, []
+    return rows[0]["rodada_id"], [cid for row in rows for cid in json.loads(row["custom_ids"])]
+
+
+def round_totals(conn: sqlite3.Connection, rodada_id: int) -> sqlite3.Row:
+    """Os números de uma rodada: fichas, válidas, reprovadas, chamadas, novas tentativas e custo."""
+    return conn.execute(
+        "SELECT COUNT(DISTINCT t.ficha_id) AS fichas, "
+        "COUNT(DISTINCT CASE WHEN p.status = 'valido' THEN t.ficha_id END) AS validas, "
+        "COUNT(DISTINCT CASE WHEN p.status = 'reprovado' THEN t.ficha_id END) AS reprovadas, "
+        "COUNT(*) AS chamadas, TOTAL(t.numero > 1) AS novas_tentativas, TOTAL(t.custo) AS custo "
+        "FROM tentativas t LEFT JOIN produtos p ON p.ficha_id = t.ficha_id WHERE t.rodada_id = ?",
+        (rodada_id,),
+    ).fetchone()

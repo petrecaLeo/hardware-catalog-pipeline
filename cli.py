@@ -6,8 +6,8 @@ from pathlib import Path
 
 import anthropic
 
-from pipeline import db, extract
-from pipeline.config import DB_FILE
+from pipeline import batch, db, extract
+from pipeline.config import BATCH_POLL_SECONDS, DB_FILE
 from pipeline.fake_client import FakeAPI
 from pipeline.sheets import SETS, load_sheets, sheets_path
 
@@ -39,10 +39,20 @@ def ingest(conn, paths: list[Path]) -> None:
     print(f"total: {new_total} novas, {total - new_total} já existiam")
 
 
-def process(conn, conjunto: str | None, limit: int | None, fake: bool) -> None:
+def process(conn, in_batch: bool, conjunto: str | None, limit: int | None, fake: bool) -> None:
     client = FakeAPI().client if fake else anthropic.Anthropic()
-    print(f"modo direto ({'API falsa' if fake else 'API real'})")
-    summary = extract.process(client, conn, conjunto, limit)
+    api = "API falsa" if fake else "API real"
+    if in_batch:
+        print(f"modo lote ({api})")
+        # A API falsa responde na hora: não há o que esperar entre as consultas.
+        poll_seconds = 0 if fake else BATCH_POLL_SECONDS
+        try:
+            summary = batch.process(client, conn, conjunto, limit, poll_seconds)
+        except KeyboardInterrupt:
+            sys.exit("\ninterrompido: rode `process --lote` de novo para retomar o lote pendente")
+    else:
+        print(f"modo direto ({api})")
+        summary = extract.process(client, conn, conjunto, limit)
     print(
         f"resumo: {summary.sheets} fichas | {summary.valid} válidas | {summary.failed} reprovadas"
         f" | {summary.calls} chamadas ({summary.retries} novas tentativas)"
@@ -67,6 +77,11 @@ def main(argv: list[str] | None = None) -> None:
     mode.add_argument(
         "--direto", action="store_true", help="uma chamada por vez, com a correção na hora"
     )
+    mode.add_argument(
+        "--lote",
+        action="store_true",
+        help="pela API de lote: metade do preço, pode levar horas; retoma o lote pendente",
+    )
     process_parser.add_argument(
         "--conjunto", choices=(*SETS, "inbox"), help="só as fichas deste conjunto"
     )
@@ -81,7 +96,7 @@ def main(argv: list[str] | None = None) -> None:
         if args.command == "ingest":
             ingest(conn, args.paths)
         elif args.command == "process":
-            process(conn, args.conjunto, args.limite, args.fake)
+            process(conn, args.lote, args.conjunto, args.limite, args.fake)
     finally:
         conn.close()
 

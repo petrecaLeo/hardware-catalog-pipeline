@@ -40,6 +40,7 @@ Os lotes ficam na memória do objeto: o id de um lote de outro `FakeAPI` dá 404
 
 import json
 import re
+import uuid
 from datetime import UTC, datetime, timedelta
 
 import httpx2
@@ -233,7 +234,8 @@ class FakeAPI:
         if self.out_of_order:
             results.reverse()
         batch = {
-            "id": f"msgbatch_fake_{len(self.batches) + 1:04d}",
+            # Único, como na API real: o banco guarda o id, e outro processo cria outros lotes.
+            "id": f"msgbatch_fake_{uuid.uuid4().hex[:16]}",
             "created_at": datetime.now(UTC),
             "results": results,
             "polls_left": self.in_progress_polls,
