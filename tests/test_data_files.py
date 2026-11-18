@@ -8,7 +8,7 @@ from pipeline.rules import validate_classification, validate_product
 from pipeline.schemas import CATEGORIES
 from pipeline.sheets import load_sheets, split_answer_key
 
-SETS = ["dev"]
+SETS = ["dev", "holdout"]
 
 STYLES = (
     "anuncio_informal",
@@ -24,8 +24,9 @@ STYLES = (
     "de_por",
     "parcelado",
 )
-MIN_PER_CATEGORY = 4
-MIN_PER_STYLE = 3
+# A prova é menor (cerca de 30 fichas), então pede menos fichas por categoria e por estilo.
+MIN_PER_CATEGORY = {"dev": 4, "holdout": 3}
+MIN_PER_STYLE = {"dev": 3, "holdout": 2}
 
 # Marcas que as fichas não usam: as dos exemplos dos testes e as de dados anteriores.
 FORBIDDEN_BRANDS = (
@@ -34,19 +35,37 @@ FORBIDDEN_BRANDS = (
     "Vortex", "Orion", "Nimbus", "Glacier", "Titan", "Vega Storm", "Kestrel", "Hubtron",
     "Circuito", "Aurora", "Pulse", "Vetor",
 )
-# Palavra inteira, como a marca é escrita ou em caixa alta ("Circuito", "CIRCUITO"), e não
-# depois de hífen: assim "Titanium" e "curto-circuito" (ou "CURTO-CIRCUITO") não contam.
-FORBIDDEN = re.compile(
-    r"(?<![\w-])("
-    + "|".join(re.escape(form) for brand in FORBIDDEN_BRANDS for form in (brand, brand.upper()))
-    + r")(?!\w)"
-)
+# Os fabricantes reais (a marca dos processadores) podem aparecer nos dois conjuntos.
+REAL_BRANDS = {"AMD", "Intel"}
 FIELDS = {"id", "texto", "estilo", "pegadinha", "gabarito"}
 
 
+def brand_pattern(brands):
+    """Acha a marca como palavra inteira, como é escrita ou em caixa alta ("Circuito",
+    "CIRCUITO"), e não depois de hífen: assim "Titanium" e "curto-circuito" não contam."""
+    forms = (re.escape(form) for brand in brands for form in (brand, brand.upper()))
+    return re.compile(r"(?<![\w-])(" + "|".join(forms) + r")(?!\w)")
+
+
+FORBIDDEN = brand_pattern(FORBIDDEN_BRANDS)
+
+
+def load(set_name):
+    return load_sheets(DATA_DIR / set_name / "fichas.jsonl")
+
+
+def full_text(sheet):
+    return " ".join([sheet["texto"], sheet["pegadinha"] or "", str(sheet["gabarito"])])
+
+
 @pytest.fixture(params=SETS)
-def sheets(request):
-    return load_sheets(DATA_DIR / request.param / "fichas.jsonl")
+def set_name(request):
+    return request.param
+
+
+@pytest.fixture
+def sheets(set_name):
+    return load(set_name)
 
 
 def test_sheets_have_the_expected_fields(sheets):
@@ -71,21 +90,52 @@ def test_answer_keys_pass_schema_and_rules(sheets):
     assert failures == {}
 
 
-def test_every_category_has_enough_sheets(sheets):
+def test_every_category_has_enough_sheets(sheets, set_name):
     counts = Counter(sheet["gabarito"]["categoria"] for sheet in sheets)
-    assert {cat: counts[cat] for cat in CATEGORIES if counts[cat] < MIN_PER_CATEGORY} == {}
+    minimum = MIN_PER_CATEGORY[set_name]
+    assert {cat: counts[cat] for cat in CATEGORIES if counts[cat] < minimum} == {}
 
 
-def test_every_style_has_enough_sheets(sheets):
+def test_every_style_has_enough_sheets(sheets, set_name):
     counts = Counter(sheet["estilo"] for sheet in sheets)
+    minimum = MIN_PER_STYLE[set_name]
     assert set(counts) <= set(STYLES)
-    assert {style: counts[style] for style in STYLES if counts[style] < MIN_PER_STYLE} == {}
+    assert {style: counts[style] for style in STYLES if counts[style] < minimum} == {}
 
 
 def test_no_forbidden_brand(sheets):
     found = {}
     for sheet in sheets:
-        text = " ".join([sheet["texto"], sheet["pegadinha"] or "", str(sheet["gabarito"])])
-        if match := FORBIDDEN.search(text):
+        if match := FORBIDDEN.search(full_text(sheet)):
             found[sheet["id"]] = match.group()
+    assert found == {}
+
+
+# A prova só mede de verdade se não repete nada do desenvolvimento, onde o prompt é ajustado.
+
+
+def test_no_product_name_in_both_sets():
+    dev_names = {sheet["gabarito"]["nome"].casefold() for sheet in load("dev")}
+    repeated = [s["id"] for s in load("holdout") if s["gabarito"]["nome"].casefold() in dev_names]
+    assert repeated == []
+
+
+def test_no_text_in_both_sets():
+    def normalize(text):
+        return " ".join(text.split()).casefold()
+
+    dev_texts = {normalize(sheet["texto"]) for sheet in load("dev")}
+    assert [s["id"] for s in load("holdout") if normalize(s["texto"]) in dev_texts] == []
+
+
+def test_no_invented_brand_in_both_sets():
+    # A marca inventada de um conjunto não aparece em nenhuma ficha do outro.
+    sets = {name: load(name) for name in ("dev", "holdout")}
+    found = {}
+    for name, other in (("dev", "holdout"), ("holdout", "dev")):
+        brands = {sheet["gabarito"]["marca"] for sheet in sets[name]} - REAL_BRANDS - {None}
+        pattern = brand_pattern(brands)
+        for sheet in sets[other]:
+            if match := pattern.search(full_text(sheet)):
+                found[sheet["id"]] = match.group()
     assert found == {}
