@@ -225,6 +225,10 @@ def _with_doubts(fields: type[Product]) -> type[Product]:
     )
 
 
+# A versão dos campos acima. Cada produto do banco guarda a versão com que foi extraído; ela sobe
+# quando os campos mudam, para saber quais produtos refazer.
+SCHEMA_VERSION = 1
+
 # Os campos de cada categoria, sem dúvidas: é o formato do gabarito e da edição na tela.
 PRODUCT_MODELS: dict[str, type[Product]] = {
     "processador": Cpu,

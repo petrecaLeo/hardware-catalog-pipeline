@@ -5,10 +5,12 @@ colunas TEXT, como JSON. Grave sempre dentro de `with conn:`, que faz o commit o
 """
 
 import hashlib
+import json
 import sqlite3
 from pathlib import Path
 
 from pipeline.config import DB_FILE
+from pipeline.schemas import SCHEMA_VERSION
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS fichas (
@@ -17,7 +19,7 @@ CREATE TABLE IF NOT EXISTS fichas (
     texto TEXT NOT NULL,
     conjunto TEXT NOT NULL,             -- 'dev' ou 'holdout' (com gabarito no jsonl) ou 'inbox'
     id_origem TEXT NOT NULL,            -- id no jsonl ('dev-001') ou nome do .txt
-    status TEXT NOT NULL DEFAULT 'pendente',  -- 'pendente' até ser processada
+    status TEXT NOT NULL DEFAULT 'pendente',  -- 'pendente' até ser processada; depois 'processada'
     criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
@@ -37,8 +39,10 @@ CREATE TABLE IF NOT EXISTS tentativas (
     numero INTEGER NOT NULL,            -- 1 = primeira resposta; depois, as correções
     resposta TEXT,                      -- JSON: o input da ferramenta (null se a chamada falhou)
     erro TEXT,                          -- erro de validação ou da API (null se passou)
-    tokens_entrada INTEGER NOT NULL,    -- 0 se a chamada falhou sem resposta
+    tokens_entrada INTEGER NOT NULL,    -- só a parte sem cache; 0 se a chamada falhou sem resposta
     tokens_saida INTEGER NOT NULL,
+    tokens_cache_escrita INTEGER NOT NULL DEFAULT 0,  -- entrada gravada no cache (1,25× o preço)
+    tokens_cache_leitura INTEGER NOT NULL DEFAULT 0,  -- entrada lida do cache (0,1× o preço)
     custo REAL NOT NULL,                -- US$, já com o preço do modo da rodada
     criado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -48,8 +52,11 @@ CREATE TABLE IF NOT EXISTS produtos (
     categoria TEXT NOT NULL,
     campos TEXT NOT NULL,               -- JSON: os campos de PRODUCT_MODELS[categoria]
     duvidas TEXT NOT NULL,              -- JSON: [{campo, nivel, motivo}]
-    status TEXT NOT NULL,               -- catálogo, fila de revisão ou rejeitado
-    motivos TEXT NOT NULL,              -- JSON: por que foi para a revisão ([] se não foi)
+    -- Depois da extração: 'valido' (passou no esquema e nas regras) ou 'reprovado' (continuou com
+    -- erro depois das tentativas). O roteamento troca por catálogo, fila de revisão ou rejeitado.
+    status TEXT NOT NULL,
+    motivos TEXT NOT NULL,              -- JSON: por que foi para a revisão ([] se não foi); no
+                                        -- 'reprovado', os erros [{campo, mensagem}] que sobraram
     auditoria INTEGER NOT NULL DEFAULT 0,  -- 1 se caiu no sorteio da auditoria
     versao_esquema INTEGER NOT NULL,    -- versão dos campos com que foi extraído
     atualizado_em TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
@@ -109,3 +116,95 @@ def add_sheets(conn: sqlite3.Connection, conjunto: str, sheets: list[tuple[str, 
             rows,
         )
     return cursor.rowcount
+
+
+def pending_sheets(
+    conn: sqlite3.Connection, conjunto: str | None = None, limit: int | None = None
+) -> list[sqlite3.Row]:
+    """As fichas ainda não processadas, na ordem em que entraram no banco."""
+    sql = "SELECT id, id_origem, texto FROM fichas WHERE status = 'pendente'"
+    params = []
+    if conjunto is not None:
+        sql += " AND conjunto = ?"
+        params.append(conjunto)
+    sql += " ORDER BY id"
+    if limit is not None:
+        sql += " LIMIT ?"
+        params.append(limit)
+    return conn.execute(sql, params).fetchall()
+
+
+def start_round(conn: sqlite3.Connection, modo: str) -> int:
+    """Cria a rodada de processamento ('direct' ou 'batch') e devolve o id dela."""
+    with conn:
+        return conn.execute("INSERT INTO rodadas (modo) VALUES (?)", (modo,)).lastrowid
+
+
+# As duas funções abaixo não fazem commit: quem chama junta as tentativas e o produto de uma ficha
+# num mesmo `with conn:`.
+
+
+def add_attempt(
+    conn: sqlite3.Connection,
+    ficha_id: int,
+    rodada_id: int,
+    etapa: str,
+    numero: int,
+    resposta: dict | None,
+    erro: str | None,
+    usage,
+    custo: float,
+) -> None:
+    """Guarda uma chamada ao modelo. `usage` é o `message.usage` da resposta."""
+    conn.execute(
+        "INSERT INTO tentativas (ficha_id, rodada_id, etapa, numero, resposta, erro, "
+        "tokens_entrada, tokens_saida, tokens_cache_escrita, tokens_cache_leitura, custo) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        (
+            ficha_id,
+            rodada_id,
+            etapa,
+            numero,
+            None if resposta is None else json.dumps(resposta, ensure_ascii=False),
+            erro,
+            usage.input_tokens,
+            usage.output_tokens,
+            usage.cache_creation_input_tokens or 0,
+            usage.cache_read_input_tokens or 0,
+            custo,
+        ),
+    )
+
+
+def save_product(
+    conn: sqlite3.Connection,
+    ficha_id: int,
+    categoria: str,
+    campos: dict,
+    duvidas: list,
+    status: str,
+    motivos: list,
+) -> None:
+    """Grava o produto da ficha (ou troca o que já existia) e tira a ficha das pendentes.
+
+    `ON CONFLICT ... DO UPDATE` atualiza a linha no lugar. `INSERT OR REPLACE` apagaria a linha, e
+    com as revisões apontando para ela a chave estrangeira falharia.
+    """
+    conn.execute(
+        "INSERT INTO produtos (ficha_id, categoria, campos, duvidas, status, motivos, "
+        "versao_esquema) VALUES (?, ?, ?, ?, ?, ?, ?) "
+        "ON CONFLICT (ficha_id) DO UPDATE SET categoria = excluded.categoria, "
+        "campos = excluded.campos, duvidas = excluded.duvidas, status = excluded.status, "
+        "motivos = excluded.motivos, versao_esquema = excluded.versao_esquema, "
+        "atualizado_em = CURRENT_TIMESTAMP",
+        (
+            ficha_id,
+            categoria,
+            json.dumps(campos, ensure_ascii=False),
+            json.dumps(duvidas, ensure_ascii=False),
+            status,
+            json.dumps(motivos, ensure_ascii=False),
+            SCHEMA_VERSION,
+        ),
+    )
+    conn.execute("UPDATE fichas SET status = 'processada' WHERE id = ?", (ficha_id,))

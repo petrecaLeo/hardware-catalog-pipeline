@@ -22,5 +22,8 @@ CACHE_READ_FACTOR = 0.1
 
 CLASSIFY_MAX_TOKENS = 150
 EXTRACT_MAX_TOKENS = 600
+# Resposta cortada (stop_reason "max_tokens") volta igual, com este limite um pouco maior.
+CLASSIFY_RETRY_MAX_TOKENS = 300
+EXTRACT_RETRY_MAX_TOKENS = 900
 # Depois da primeira resposta, quantas vezes a ficha volta ao modelo com o erro de validação.
 EXTRA_ATTEMPTS = 2

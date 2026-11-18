@@ -24,6 +24,8 @@ Erros injetados, por id de ficha ('dev-007', 'hold-012'):
 - `wrong_first`: a extração vem com `garantia_meses` = 999, que as regras pegam. A conversa de
   correção (com um `tool_result` com `is_error`) recebe o gabarito certo;
 - `wrong_always`: `garantia_meses` = 999 sempre, mesmo na correção;
+- `wrong_class_first`: a classificação vem com `categoria_detalhe` preenchido fora de 'outro' (ou
+  null em 'outro'), que a regra pega. A conversa de correção recebe o gabarito certo;
 - `cut`: a extração vem cortada (`stop_reason="max_tokens"`, sem `duvidas`) enquanto o
   `max_tokens` não passar de `EXTRACT_MAX_TOKENS`;
 - `doubts`: `{id: (campo, nivel)}`, uma dúvida na extração;
@@ -52,6 +54,8 @@ UNKNOWN = "produto não identificado"
 # "Garantia vitalícia" lida como 999 meses: um erro que a faixa de garantia_meses pega em toda
 # categoria.
 WRONG_WARRANTY = 999
+# Detalhe numa categoria que não é 'outro': a regra da classificação pega.
+WRONG_DETAIL = "peça de computador"
 DOUBT_REASON = "o texto traz mais de um valor possível para este campo"
 CUSTOM_ID = re.compile(r"[a-zA-Z0-9_-]{1,64}")
 SHEET_TAG = re.compile(r"<ficha>(.*?)</ficha>", re.DOTALL)
@@ -71,6 +75,7 @@ class FakeAPI:
         *,
         wrong_first=(),
         wrong_always=(),
+        wrong_class_first=(),
         cut=(),
         doubts=None,
         errored=(),
@@ -80,6 +85,7 @@ class FakeAPI:
     ):
         self.wrong_first = set(wrong_first)
         self.wrong_always = set(wrong_always)
+        self.wrong_class_first = set(wrong_class_first)
         self.cut = set(cut)
         self.doubts = dict(doubts or {})
         # Cada um acontece uma vez: o id sai do conjunto quando o erro é devolvido.
@@ -133,7 +139,7 @@ class FakeAPI:
         tool = params["tool_choice"]["name"]
         sheet = self._find_sheet(params["messages"])
         if tool == CLASSIFY_TOOL["name"]:
-            data = self._classification(sheet)
+            data = self._classification(sheet, params["messages"])
         elif tool in EXTRACT_TOOL_CATEGORY:
             data = self._extraction(EXTRACT_TOOL_CATEGORY[tool], sheet, params["messages"])
         else:
@@ -182,10 +188,13 @@ class FakeAPI:
                 return self.sheets.get(tags[-1].strip())
         return None
 
-    def _classification(self, sheet: dict | None) -> dict:
+    def _classification(self, sheet: dict | None, messages: list[dict]) -> dict:
         if sheet is None:
             return {"categoria": "outro", "categoria_detalhe": UNKNOWN}
-        return split_answer_key(sheet["gabarito"])[0]
+        data = split_answer_key(sheet["gabarito"])[0]
+        if sheet["id"] in self.wrong_class_first and not _is_correction(messages):
+            data["categoria_detalhe"] = None if data["categoria"] == "outro" else WRONG_DETAIL
+        return data
 
     def _extraction(self, category: str, sheet: dict | None, messages: list[dict]) -> dict:
         if sheet is None or sheet["gabarito"]["categoria"] != category:

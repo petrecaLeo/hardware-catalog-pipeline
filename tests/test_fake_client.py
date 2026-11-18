@@ -124,6 +124,20 @@ def test_wrong_value_and_correction(fault, fixed):
         assert second["garantia_meses"] == WRONG_WARRANTY
 
 
+@pytest.mark.parametrize("sheet_id", ["dev-030", "dev-048"])  # 'fonte' e 'outro'
+def test_wrong_classification_and_correction(sheet_id):
+    client = FakeAPI(wrong_class_first={sheet_id}).client
+    params = ask(CLASSIFY_TOOL, SHEETS[sheet_id]["texto"])
+    first = client.messages.create(**params)
+
+    issues = validate_classification(tool_use(first).input)
+    assert [issue.field for issue in issues] == ["categoria_detalhe"]  # a regra pega
+
+    params["messages"] += correction(first, issues[0].message)
+    second = tool_use(client.messages.create(**params)).input
+    assert second == split_answer_key(SHEETS[sheet_id]["gabarito"])[0]
+
+
 def test_cut_until_max_tokens_is_raised():
     client = FakeAPI(cut={"dev-001"}).client
 

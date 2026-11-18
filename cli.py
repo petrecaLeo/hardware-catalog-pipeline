@@ -4,8 +4,11 @@ import argparse
 import sys
 from pathlib import Path
 
-from pipeline import db
+import anthropic
+
+from pipeline import db, extract
 from pipeline.config import DB_FILE
+from pipeline.fake_client import FakeAPI
 from pipeline.sheets import SETS, load_sheets, sheets_path
 
 
@@ -36,6 +39,17 @@ def ingest(conn, paths: list[Path]) -> None:
     print(f"total: {new_total} novas, {total - new_total} já existiam")
 
 
+def process(conn, conjunto: str | None, limit: int | None, fake: bool) -> None:
+    client = FakeAPI().client if fake else anthropic.Anthropic()
+    print(f"modo direto ({'API falsa' if fake else 'API real'})")
+    summary = extract.process(client, conn, conjunto, limit)
+    print(
+        f"resumo: {summary.sheets} fichas | {summary.valid} válidas | {summary.failed} reprovadas"
+        f" | {summary.calls} chamadas ({summary.retries} novas tentativas)"
+        f" | custo total: ${summary.cost:.6f}"
+    )
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Pipeline de entrada de catálogo de hardware.")
     parser.add_argument(
@@ -48,11 +62,26 @@ def main(argv: list[str] | None = None) -> None:
         "paths", nargs="+", type=Path, metavar="caminho", help="arquivo .jsonl ou pasta de .txt"
     )
 
+    process_parser = commands.add_parser("process", help="extrai e valida as fichas pendentes")
+    mode = process_parser.add_mutually_exclusive_group(required=True)
+    mode.add_argument(
+        "--direto", action="store_true", help="uma chamada por vez, com a correção na hora"
+    )
+    process_parser.add_argument(
+        "--conjunto", choices=(*SETS, "inbox"), help="só as fichas deste conjunto"
+    )
+    process_parser.add_argument("--limite", type=int, metavar="N", help="no máximo N fichas")
+    process_parser.add_argument(
+        "--fake", action="store_true", help="usa a API falsa: sem chave e sem custo"
+    )
+
     args = parser.parse_args(argv)
     conn = db.connect(args.db)
     try:
         if args.command == "ingest":
             ingest(conn, args.paths)
+        elif args.command == "process":
+            process(conn, args.conjunto, args.limite, args.fake)
     finally:
         conn.close()
 
