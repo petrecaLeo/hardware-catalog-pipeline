@@ -3,12 +3,9 @@ from collections import Counter
 
 import pytest
 
-from pipeline.config import DATA_DIR
 from pipeline.rules import validate_classification, validate_product
 from pipeline.schemas import CATEGORIES
-from pipeline.sheets import load_sheets, split_answer_key
-
-SETS = ["dev", "holdout"]
+from pipeline.sheets import SETS, load_sheets, sheets_path, split_answer_key
 
 STYLES = (
     "anuncio_informal",
@@ -51,7 +48,7 @@ FORBIDDEN = brand_pattern(FORBIDDEN_BRANDS)
 
 
 def load(set_name):
-    return load_sheets(DATA_DIR / set_name / "fichas.jsonl")
+    return load_sheets(sheets_path(set_name))
 
 
 def full_text(sheet):

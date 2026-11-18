@@ -8,6 +8,16 @@ campos de `PRODUCT_MODELS[categoria]`.
 import json
 from pathlib import Path
 
+from pipeline.config import DATA_DIR
+
+# Os conjuntos com gabarito: o de desenvolvimento e o de prova.
+SETS = ("dev", "holdout")
+
+
+def sheets_path(conjunto: str) -> Path:
+    """O arquivo das fichas com gabarito de um conjunto."""
+    return DATA_DIR / conjunto / "fichas.jsonl"
+
 
 def load_sheets(path: Path) -> list[dict]:
     """As fichas do arquivo, na ordem em que estão."""
