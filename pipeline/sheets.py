@@ -9,9 +9,13 @@ import json
 from pathlib import Path
 
 from pipeline.config import DATA_DIR
+from pipeline.rules import Issue, validate_classification, validate_product
 
 # Os conjuntos com gabarito: o de desenvolvimento e o de prova.
 SETS = ("dev", "holdout")
+# O estilo de uma ficha da inbox que virou caso pela correção humana (cli.py export-corrections):
+# ninguém marcou como ela foi escrita.
+UNKNOWN_STYLE = "desconhecido"
 
 
 def sheets_path(conjunto: str) -> Path:
@@ -35,3 +39,19 @@ def split_answer_key(answer_key: dict) -> tuple[dict, dict]:
     if answer_key["categoria"] == "outro":
         product["categoria_detalhe"] = answer_key["categoria_detalhe"]
     return classification, product
+
+
+def join_answer_key(categoria: str, campos: dict) -> dict:
+    """O gabarito de um produto: o contrário de `split_answer_key`."""
+    detail = campos["categoria_detalhe"] if categoria == "outro" else None
+    product = {key: value for key, value in campos.items() if key != "categoria_detalhe"}
+    return {"categoria": categoria, "categoria_detalhe": detail, **product}
+
+
+def answer_key_issues(sheet: dict) -> list[Issue]:
+    """Os erros do gabarito de uma ficha: a classificação, o esquema e as regras da categoria, com
+    o texto (ficha só em dólar tem preço null). Lista vazia = gabarito válido."""
+    classification, product = split_answer_key(sheet["gabarito"])
+    return validate_classification(classification) + validate_product(
+        classification["categoria"], product, sheet["texto"]
+    )

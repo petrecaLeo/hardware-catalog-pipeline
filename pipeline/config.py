@@ -6,6 +6,8 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 PROMPTS_DIR = ROOT_DIR / "pipeline" / "prompts"
 DATA_DIR = ROOT_DIR / "data"
 DB_FILE = DATA_DIR / "catalog.db"
+# Saída do `cli.py export-corrections`: as correções humanas como fichas com gabarito.
+CORRECTIONS_FILE = DATA_DIR / "corrections.jsonl"
 DOCS_DIR = ROOT_DIR / "docs"
 
 load_dotenv(ROOT_DIR / ".env")

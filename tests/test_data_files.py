@@ -3,9 +3,8 @@ from collections import Counter
 
 import pytest
 
-from pipeline.rules import validate_classification, validate_product
 from pipeline.schemas import CATEGORIES
-from pipeline.sheets import SETS, load_sheets, sheets_path, split_answer_key
+from pipeline.sheets import SETS, UNKNOWN_STYLE, answer_key_issues, load_sheets, sheets_path
 
 STYLES = (
     "anuncio_informal",
@@ -55,6 +54,11 @@ def full_text(sheet):
     return " ".join([sheet["texto"], sheet["pegadinha"] or "", str(sheet["gabarito"])])
 
 
+def same_text(text):
+    """O texto sem diferença de espaços e de caixa: duas fichas com ele são a mesma."""
+    return " ".join(text.split()).casefold()
+
+
 @pytest.fixture(params=SETS)
 def set_name(request):
     return request.param
@@ -74,15 +78,18 @@ def test_ids_are_unique(sheets):
     assert [sheet_id for sheet_id, count in ids.items() if count > 1] == []
 
 
+def test_texts_are_unique(sheets):
+    # O banco guarda cada texto uma vez (a ficha repetida nunca seria avaliada), e a API falsa
+    # responde pelo texto. A correção de uma ficha que o dev já tem não é caso novo.
+    texts = Counter(same_text(sheet["texto"]) for sheet in sheets)
+    assert [sheet["id"] for sheet in sheets if texts[same_text(sheet["texto"])] > 1] == []
+
+
 def test_answer_keys_pass_schema_and_rules(sheets):
     # Com o texto: ficha só em dólar tem preço null no gabarito.
     failures = {}
     for sheet in sheets:
-        classification, product = split_answer_key(sheet["gabarito"])
-        issues = validate_classification(classification) + validate_product(
-            classification["categoria"], product, sheet["texto"]
-        )
-        if issues:
+        if issues := answer_key_issues(sheet):
             failures[sheet["id"]] = [issue.message for issue in issues]
     assert failures == {}
 
@@ -96,7 +103,9 @@ def test_every_category_has_enough_sheets(sheets, set_name):
 def test_every_style_has_enough_sheets(sheets, set_name):
     counts = Counter(sheet["estilo"] for sheet in sheets)
     minimum = MIN_PER_STYLE[set_name]
-    assert set(counts) <= set(STYLES)
+    # Uma correção humana de ficha da inbox, colada no dev, entra com o estilo desconhecido. Na
+    # prova, não: ela não recebe correções.
+    assert set(counts) <= ({*STYLES, UNKNOWN_STYLE} if set_name == "dev" else set(STYLES))
     assert {style: counts[style] for style in STYLES if counts[style] < minimum} == {}
 
 
@@ -118,11 +127,8 @@ def test_no_product_name_in_both_sets():
 
 
 def test_no_text_in_both_sets():
-    def normalize(text):
-        return " ".join(text.split()).casefold()
-
-    dev_texts = {normalize(sheet["texto"]) for sheet in load("dev")}
-    assert [s["id"] for s in load("holdout") if normalize(s["texto"]) in dev_texts] == []
+    dev_texts = {same_text(sheet["texto"]) for sheet in load("dev")}
+    assert [s["id"] for s in load("holdout") if same_text(s["texto"]) in dev_texts] == []
 
 
 def test_no_invented_brand_in_both_sets():

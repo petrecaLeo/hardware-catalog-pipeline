@@ -1,6 +1,7 @@
 """Linha de comando do pipeline: `.venv/bin/python cli.py <comando>`."""
 
 import argparse
+import json
 import sys
 from collections import Counter
 from pathlib import Path
@@ -10,9 +11,16 @@ import uvicorn
 
 from api.main import HOST, PORT, create_app
 from pipeline import batch, db, evaluate, extract, route
-from pipeline.config import BATCH_POLL_SECONDS, DB_FILE, MODE_NAMES
+from pipeline.config import BATCH_POLL_SECONDS, CORRECTIONS_FILE, DB_FILE, MODE_NAMES
 from pipeline.fake_client import FakeAPI
-from pipeline.sheets import SETS, load_sheets, sheets_path
+from pipeline.sheets import (
+    SETS,
+    UNKNOWN_STYLE,
+    answer_key_issues,
+    join_answer_key,
+    load_sheets,
+    sheets_path,
+)
 
 REASON_NAMES = {"reprovado": "reprovado", "duvida_baixa": "dúvida baixa", "auditoria": "auditoria"}
 # O `--fake` simula alguns problemas, para a fila de revisão ter um exemplo de cada motivo, além
@@ -144,6 +152,64 @@ def run_eval(conn, conjunto: str, compare: list[Path], save: bool) -> None:
         print(f"salvo em {evaluate.save(conjunto, text)}")
 
 
+def export_corrections(conn, path: Path) -> None:
+    """Cada ficha cuja última decisão na revisão foi aprovar com edição vira uma ficha com
+    gabarito, no formato de data/dev/fichas.jsonl. O gabarito é a versão do humano, e a pegadinha
+    diz o que ele mudou: é o erro que o caso pega.
+
+    - Ficha nova (da inbox): id 'corr-' + o começo do hash do texto (o mesmo a cada exportação) e
+      estilo 'desconhecido'. É um caso novo: a linha pode ser colada no fim do
+      data/dev/fichas.jsonl, sem retoque.
+    - Ficha que o dev já tem (o mesmo texto): o id e o estilo de lá ('dev-030'). Não é caso novo:
+      serve para comparar com o gabarito de lá ou para escolher um exemplo.
+
+    Ficam de fora as fichas da prova, pelo conjunto ou pelo texto (uma cópia que entrou pela
+    inbox também): a correção delas no desenvolvimento contaminaria a medida. E a correção que,
+    como gabarito, não passa nas regras com o texto da ficha: o revisor pode dar preço em reais a
+    uma ficha só em dólar, mas no gabarito esse preço é null.
+    """
+
+    def shown(value):
+        return json.dumps(value, ensure_ascii=False)
+
+    dev = {sheet["texto"].strip(): sheet for sheet in load_sheets(sheets_path("dev"))}
+    held_out_texts = {sheet["texto"].strip() for sheet in load_sheets(sheets_path("holdout"))}
+    lines, held_out = [], 0
+    for row in db.edited_approvals(conn):
+        if row["conjunto"] == "holdout" or row["texto"] in held_out_texts:
+            held_out += 1
+            continue
+        before, after = json.loads(row["antes"]), json.loads(row["depois"])
+        changes = "; ".join(
+            f"{field}: {shown(before.get(field))} → {shown(value)}"
+            for field, value in after.items()
+            if before.get(field) != value
+        )
+        known = dev.get(row["texto"])
+        sheet = {
+            "id": known["id"] if known else f"corr-{row['hash'][:8]}",
+            "texto": row["texto"],
+            "estilo": known["estilo"] if known else UNKNOWN_STYLE,
+            "pegadinha": f"Corrigido na revisão humana: {changes}.",
+            "gabarito": join_answer_key(row["categoria"], after),
+        }
+        if issues := answer_key_issues(sheet):
+            print(
+                f"{row['id_origem']}: pulada; como gabarito, a correção não passa nas regras com o"
+                f" texto da ficha: {' '.join(issue.message for issue in issues)}"
+            )
+            continue
+        lines.append(shown(sheet) + "\n")
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("".join(lines), encoding="utf-8")
+    if held_out:
+        print(
+            f"{held_out} correções de fichas da prova (holdout) ficaram de fora: a prova não vira"
+            " caso de desenvolvimento"
+        )
+    print(f"{len(lines)} correções exportadas para {path}")
+
+
 def serve(db_file: Path) -> None:
     """A tela de revisão, só para esta máquina (127.0.0.1)."""
     print(f"tela de revisão em http://{HOST}:{PORT} (banco: {db_file}; Ctrl-C para parar)")
@@ -209,6 +275,19 @@ def main(argv: list[str] | None = None) -> None:
         help="grava em docs/results.md (holdout) ou docs/results-dev.md (dev)",
     )
 
+    export_parser = commands.add_parser(
+        "export-corrections",
+        help="as fichas aprovadas com edição viram fichas com gabarito, no formato do dev "
+        "(as da prova ficam de fora)",
+    )
+    export_parser.add_argument(
+        "--saida",
+        type=Path,
+        default=CORRECTIONS_FILE,
+        metavar="ARQUIVO",
+        help="arquivo .jsonl gerado (padrão: data/corrections.jsonl)",
+    )
+
     commands.add_parser(
         "serve", help=f"abre a tela de revisão em http://{HOST}:{PORT}, só nesta máquina"
     )
@@ -229,6 +308,8 @@ def main(argv: list[str] | None = None) -> None:
             status(conn)
         elif args.command == "eval":
             run_eval(conn, args.conjunto, args.comparar, args.salvar)
+        elif args.command == "export-corrections":
+            export_corrections(conn, args.saida)
     finally:
         conn.close()
 

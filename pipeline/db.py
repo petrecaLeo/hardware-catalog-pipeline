@@ -420,6 +420,20 @@ def decide(
     return bool(saved)
 
 
+def edited_approvals(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """As fichas cuja última decisão do revisor foi aprovar com edição (`depois` não nulo), na
+    ordem das fichas: conjunto, id_origem, hash e texto da ficha, a categoria do produto e os
+    campos antes e depois da edição. Vale a última decisão: se, depois de uma nova extração, ele
+    aprovou sem editar ou rejeitou, a edição de antes não conta mais."""
+    return conn.execute(
+        "SELECT f.conjunto, f.id_origem, f.hash, f.texto, p.categoria, r.antes, r.depois "
+        "FROM revisoes r JOIN fichas f ON f.id = r.ficha_id "
+        "JOIN produtos p ON p.ficha_id = r.ficha_id "
+        "WHERE r.id IN (SELECT MAX(id) FROM revisoes GROUP BY ficha_id) "
+        "AND r.acao = 'aprovar' AND r.depois IS NOT NULL ORDER BY f.id"
+    ).fetchall()
+
+
 def total_cost(conn: sqlite3.Connection) -> float:
     """O custo de todas as chamadas gravadas, em US$."""
     return conn.execute("SELECT TOTAL(custo) FROM tentativas").fetchone()[0]
