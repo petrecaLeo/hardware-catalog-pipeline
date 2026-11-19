@@ -83,8 +83,12 @@ def audit_sample(
 
 
 def tally(counts: Counter, destino: str | None, motivos: list[str]) -> None:
-    """Conta um produto: o total, o destino ('sem_destino' antes do roteamento) e cada motivo."""
-    counts.update(["produtos", destino or "sem_destino", *motivos])
+    """Conta um produto: o total, o destino ('sem_destino' antes do roteamento) e, se ele está na
+    fila, cada motivo. Quem já saiu da fila (aprovado ou rejeitado) guarda os motivos, mas não
+    conta neles."""
+    counts.update(["produtos", destino or "sem_destino"])
+    if destino == "revisao":
+        counts.update(motivos)
 
 
 def route(conn) -> Counter:

@@ -91,13 +91,19 @@ def status(conn) -> None:
 
     table = route.counts_by_category(conn)
     table["total"] = sum(table.values(), Counter())
-    columns = {"produtos": "produtos", "catalogo": "catálogo", "revisao": "revisão", **REASON_NAMES}
+    columns = {
+        "produtos": "produtos",
+        "catalogo": "catálogo",
+        "revisao": "revisão",
+        "rejeitado": "rejeitado",
+        **REASON_NAMES,
+    }
     print()
     print(f"{'categoria':<16}" + "".join(f"{name:>{len(name) + 2}}" for name in columns.values()))
     for category, counts in table.items():
         cells = "".join(f"{counts[key]:>{len(name) + 2}}" for key, name in columns.items())
         print(f"{category:<16}{cells}")
-    print("(um produto na revisão pode ter mais de um motivo)")
+    print("(os motivos contam só a fila de revisão; um produto pode ter mais de um)")
     if unrouted := table["total"]["sem_destino"]:
         print(f"{unrouted} produtos ainda sem destino: rode `cli.py route`")
 

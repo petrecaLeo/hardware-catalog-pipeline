@@ -353,3 +353,73 @@ def costs_by_mode(conn: sqlite3.Connection, conjunto: str) -> list[sqlite3.Row]:
         "JOIN fichas f ON f.id = t.ficha_id WHERE f.conjunto = ? GROUP BY r.modo ORDER BY r.modo",
         (conjunto,),
     ).fetchall()
+
+
+# --- Revisão humana (api/main.py).
+
+# O destino que cada decisão do revisor dá a um produto da fila.
+DECISIONS = {"aprovar": "catalogo", "rejeitar": "rejeitado"}
+
+
+def products_in(conn: sqlite3.Connection, destino: str) -> list[sqlite3.Row]:
+    """Os produtos de um destino ('revisao' é a fila; 'catalogo', o catálogo), na ordem das
+    fichas: id, id_origem, categoria, campos e motivos."""
+    return conn.execute(
+        "SELECT p.ficha_id AS id, f.id_origem, p.categoria, p.campos, p.motivos "
+        "FROM produtos p JOIN fichas f ON f.id = p.ficha_id WHERE p.destino = ? "
+        "ORDER BY p.ficha_id",
+        (destino,),
+    ).fetchall()
+
+
+def review_product(conn: sqlite3.Connection, ficha_id: int) -> sqlite3.Row | None:
+    """A ficha e o produto dela, ou None se a ficha não existe ou ainda não foi processada."""
+    return conn.execute(
+        "SELECT f.id, f.id_origem, f.conjunto, f.texto, p.categoria, p.campos, p.duvidas, "
+        "p.extracao, p.erros, p.destino, p.motivos "
+        "FROM fichas f JOIN produtos p ON p.ficha_id = f.id WHERE f.id = ?",
+        (ficha_id,),
+    ).fetchone()
+
+
+def sheet_attempts(conn: sqlite3.Connection, ficha_id: int) -> list[sqlite3.Row]:
+    """Todas as chamadas ao modelo de uma ficha, de todas as rodadas, na ordem em que foram
+    feitas."""
+    return conn.execute(
+        "SELECT t.rodada_id AS rodada, r.modo, t.etapa, t.numero, t.erro, t.tokens_entrada, "
+        "t.tokens_saida, t.tokens_cache_escrita, t.tokens_cache_leitura, t.custo "
+        "FROM tentativas t JOIN rodadas r ON r.id = t.rodada_id WHERE t.ficha_id = ? "
+        "ORDER BY t.id",
+        (ficha_id,),
+    ).fetchall()
+
+
+def decide(
+    conn: sqlite3.Connection, ficha_id: int, acao: str, depois: dict | None = None
+) -> bool:
+    """Grava a decisão do revisor ('aprovar' ou 'rejeitar') sobre um produto da fila, num commit:
+    a linha em `revisoes` (com os campos de antes e os editados, `depois`, se houver), o destino
+    de DECISIONS e os campos editados. Os motivos não mudam.
+
+    Devolve False, sem gravar nada, se o produto não está na fila. A linha da revisão só entra
+    se ele ainda estiver lá, e é ela que libera a troca: duas decisões ao mesmo tempo não passam.
+    """
+    depois_json = None if depois is None else json.dumps(depois, ensure_ascii=False)
+    with conn:
+        saved = conn.execute(
+            "INSERT INTO revisoes (ficha_id, acao, antes, depois) SELECT ficha_id, ?, campos, ? "
+            "FROM produtos WHERE ficha_id = ? AND destino = 'revisao'",
+            (acao, depois_json, ficha_id),
+        ).rowcount
+        if saved:
+            conn.execute(
+                "UPDATE produtos SET destino = ?, campos = COALESCE(?, campos), "
+                "atualizado_em = CURRENT_TIMESTAMP WHERE ficha_id = ?",
+                (DECISIONS[acao], depois_json, ficha_id),
+            )
+    return bool(saved)
+
+
+def total_cost(conn: sqlite3.Connection) -> float:
+    """O custo de todas as chamadas gravadas, em US$."""
+    return conn.execute("SELECT TOTAL(custo) FROM tentativas").fetchone()[0]

@@ -184,7 +184,8 @@ def test_audit_quota_counts_the_whole_database_and_skips_the_audited(tmp_path, m
 
 
 def status_table(out):
-    """As linhas da tabela do status: {categoria: [produtos, catálogo, revisão, motivos...]}."""
+    """As linhas da tabela do status: {categoria: [produtos, catálogo, revisão, rejeitado,
+    motivos...]}."""
     rows = {}
     for line in out.splitlines():
         parts = line.split()
@@ -194,20 +195,20 @@ def status_table(out):
 
 
 def database_table(conn):
-    """A mesma tabela, contada direto no banco."""
-    rows = {category: [0] * 6 for category in CATEGORIES}
+    """A mesma tabela, contada direto no banco. Os motivos são só os da fila."""
+    rows = {category: [0] * 7 for category in CATEGORIES}
     by_destination = conn.execute(
-        "SELECT categoria, COUNT(*), TOTAL(destino = 'catalogo'), TOTAL(destino = 'revisao') "
-        "FROM produtos GROUP BY categoria"
+        "SELECT categoria, COUNT(*), TOTAL(destino = 'catalogo'), TOTAL(destino = 'revisao'), "
+        "TOTAL(destino = 'rejeitado') FROM produtos GROUP BY categoria"
     )
-    for category, total, catalog, review in by_destination:
-        rows[category][:3] = [total, int(catalog), int(review)]
+    for category, *counts in by_destination:
+        rows[category][:4] = [int(count) for count in counts]
     by_reason = conn.execute(
         "SELECT p.categoria, m.value, COUNT(*) FROM produtos p, json_each(p.motivos) m "
-        "GROUP BY p.categoria, m.value"
+        "WHERE p.destino = 'revisao' GROUP BY p.categoria, m.value"
     )
     for category, reason, total in by_reason:
-        rows[category][3 + route.REASONS.index(reason)] = total
+        rows[category][4 + route.REASONS.index(reason)] = total
     rows["total"] = [sum(column) for column in zip(*rows.values())]
     return rows
 
@@ -242,7 +243,7 @@ def test_status_matches_the_database(tmp_path, capsys):
     assert status_table(out) == database_table(conn)
     # Um reprovado, uma dúvida baixa e uma auditoria por categoria, como se as 53 fossem roteadas
     # de uma vez: a cota olha o banco inteiro, e não só o roteamento.
-    assert status_table(out)["total"] == [53, 42, 11, 1, 1, len(CATEGORIES)]
+    assert status_table(out)["total"] == [53, 42, 11, 0, 1, 1, len(CATEGORIES)]
 
     # As rodadas e o custo gravado.
     rounds = conn.execute(
@@ -258,3 +259,12 @@ def test_status_matches_the_database(tmp_path, capsys):
         assert any(line.startswith(start) and line.endswith(end) for line in lines)
     total = conn.execute("SELECT TOTAL(custo) FROM tentativas").fetchone()[0]
     assert f"custo total gravado: ${total:.6f}" in lines
+
+    # A decisão do revisor: quem sai da fila guarda os motivos, mas não conta mais neles.
+    ids = dict(conn.execute("SELECT id_origem, id FROM fichas").fetchall())
+    db.decide(conn, ids["dev-001"], "aprovar")
+    db.decide(conn, ids["dev-030"], "rejeitar")
+    cli.main(["--db", str(db_file), "status"])
+    out = capsys.readouterr().out
+    assert status_table(out) == database_table(conn)
+    assert status_table(out)["total"] == [53, 43, 9, 1, 0, 0, len(CATEGORIES)]
