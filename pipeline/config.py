@@ -6,6 +6,7 @@ ROOT_DIR = Path(__file__).resolve().parent.parent
 PROMPTS_DIR = ROOT_DIR / "pipeline" / "prompts"
 DATA_DIR = ROOT_DIR / "data"
 DB_FILE = DATA_DIR / "catalog.db"
+DOCS_DIR = ROOT_DIR / "docs"
 
 load_dotenv(ROOT_DIR / ".env")
 
@@ -17,6 +18,8 @@ PRICES = {
     "direct": (0.10, 0.50),
     "batch": (0.05, 0.25),
 }
+# Como os modos aparecem no terminal e nos resultados.
+MODE_NAMES = {"direct": "direto", "batch": "lote"}
 CACHE_WRITE_FACTOR = 1.25
 CACHE_READ_FACTOR = 0.1
 

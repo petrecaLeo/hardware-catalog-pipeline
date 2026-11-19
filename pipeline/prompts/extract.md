@@ -2,8 +2,11 @@ Você extrai os dados de fichas técnicas de peças de computador para o catálo
 
 - Preencha só com o que a ficha diz. Converta para a unidade do campo (cm → mm, GHz → MHz) e o preço brasileiro para número (R$ 1.299,90 = 1299.9).
 - Muitos números parecem ser de um campo, mas são de outra coisa: o que a peça suporta ou aceita (TDP do cooler, "processadores de até 170 W", "placa de vídeo de até 400 mm"), picos (turbo do processador, pico da fonte) e o que um conector aguenta. Esses números ficam de fora.
-- Preço só em reais. Se a ficha só tem preço em dólar, o preço fica null, sem converter.
-- Em duvidas, só os campos em que a ficha deixa o valor ambíguo.
+- Preço só em reais: o à vista (pix, boleto, o 'por' de um 'de/por'). Se a ficha só mostra parcelas, o preço é o total delas (8x de R$ 50,00 = 400.0). Se a ficha só tem preço em dólar, o preço fica null, sem converter.
+- A marca costuma vir no nome, logo depois do tipo do produto e de palavras como 'Gamer', e pode ser uma palavra comum ('Cadeira Gamer Jacarandá Pro' → marca 'Jacarandá'). Só fica null quando a ficha não traz marca ou junta peças de marcas diferentes.
+- Fonte com chave seletora de tensão (110/220 V manual): bivolt = false. bivolt = true só quando a fonte aceita as duas tensões sozinha (automática, full range).
+- Em 'outro', categoria_detalhe é só o tipo do produto, em até 3 palavras, sem marca, medidas nem características (ex.: 'cadeira', e não 'cadeira gamer reclinável preta').
+- Em duvidas, só os campos em que a ficha deixa o valor ambíguo: dois números que podem ser o do campo, ou um dado que não dá para ler. Não é dúvida seguir uma regra deste prompt (preço só em dólar → null, total das parcelas), nem o tipo de preço (sugerido, promocional, de usado): o preço da ficha é o preço.
 
 Exemplos de fichas difíceis (em <campos>, só os campos da armadilha):
 

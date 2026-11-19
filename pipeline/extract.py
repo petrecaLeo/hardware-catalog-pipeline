@@ -33,6 +33,9 @@ from pipeline.tools import CLASSIFY_TOOL, EXTRACT_TOOLS
 
 STAGES = ("classify", "extract")
 PROMPTS = {stage: (PROMPTS_DIR / f"{stage}.md").read_text(encoding="utf-8") for stage in STAGES}
+# As fichas do dev que aparecem como exemplo nos prompts. Elas não contam na avaliação, porque o
+# modelo já viu a resposta. Trocou um exemplo? Troque aqui também (um teste confere).
+EXAMPLE_SHEETS = frozenset({"dev-018", "dev-036", "dev-047"})
 MAX_TOKENS = {"classify": CLASSIFY_MAX_TOKENS, "extract": EXTRACT_MAX_TOKENS}
 RETRY_MAX_TOKENS = {"classify": CLASSIFY_RETRY_MAX_TOKENS, "extract": EXTRACT_RETRY_MAX_TOKENS}
 DOUBT_KEYS = {"campo", "nivel", "motivo"}
@@ -220,16 +223,24 @@ def extract_sheet(client, text: str) -> SheetResult:
     return SheetResult(category, extraction, classification.issues + extraction.issues, calls)
 
 
-def store_product(conn, ficha_id: int, result: SheetResult) -> None:
-    """Grava o produto da ficha, sem commit: os campos, as dúvidas e o resultado da extração
-    (válido ou reprovado, com os erros que sobraram). O destino fica para o roteamento."""
-    fields = dict(result.extraction.data or {})
-    # Uma resposta cortada pode vir sem as dúvidas, ou com a última pela metade: ficam só as
-    # completas, que o roteamento e a tela leem.
+def split_doubts(data: dict | None) -> tuple[dict, list[dict]]:
+    """Os campos e as dúvidas de uma resposta da extração.
+
+    Uma resposta cortada pode vir sem as dúvidas, ou com a última pela metade: ficam só as
+    completas, que o roteamento, a tela e a avaliação leem.
+    """
+    fields = dict(data or {})
     doubts = fields.pop("duvidas", None)
     if not isinstance(doubts, list):
         doubts = []
     doubts = [doubt for doubt in doubts if isinstance(doubt, dict) and DOUBT_KEYS <= doubt.keys()]
+    return fields, doubts
+
+
+def store_product(conn, ficha_id: int, result: SheetResult) -> None:
+    """Grava o produto da ficha, sem commit: os campos, as dúvidas e o resultado da extração
+    (válido ou reprovado, com os erros que sobraram). O destino fica para o roteamento."""
+    fields, doubts = split_doubts(result.extraction.data)
     extraction = "reprovado" if result.issues else "valido"
     errors = [{"campo": issue.field, "mensagem": issue.message} for issue in result.issues]
     db.save_product(conn, ficha_id, result.category, fields, doubts, extraction, errors)

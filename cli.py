@@ -7,12 +7,11 @@ from pathlib import Path
 
 import anthropic
 
-from pipeline import batch, db, extract, route
-from pipeline.config import BATCH_POLL_SECONDS, DB_FILE
+from pipeline import batch, db, evaluate, extract, route
+from pipeline.config import BATCH_POLL_SECONDS, DB_FILE, MODE_NAMES
 from pipeline.fake_client import FakeAPI
 from pipeline.sheets import SETS, load_sheets, sheets_path
 
-MODE_NAMES = {"direct": "direto", "batch": "lote"}
 REASON_NAMES = {"reprovado": "reprovado", "duvida_baixa": "dúvida baixa", "auditoria": "auditoria"}
 
 
@@ -103,6 +102,27 @@ def status(conn) -> None:
         print(f"{unrouted} produtos ainda sem destino: rode `cli.py route`")
 
 
+def run_eval(conn, conjunto: str, compare: list[Path], save: bool) -> None:
+    """A avaliação do banco (a medida) e, só para comparar, de outros bancos com o mesmo conjunto
+    processado noutro modo. Mostra o Markdown e, com `save`, grava em docs/ (mantendo o trecho
+    escrito à mão no fim do arquivo)."""
+    reports = [evaluate.evaluate(conn, conjunto)]
+    for path in compare:
+        if not path.is_file():
+            sys.exit(f"{path}: banco não encontrado")
+        other = db.connect(path)
+        try:
+            reports.append(evaluate.evaluate(other, conjunto))
+        finally:
+            other.close()
+    if not all(report.total.clean.total for report in reports):
+        sys.exit(f"nenhum produto do conjunto {conjunto} num dos bancos: rode ingest e process")
+    text = evaluate.markdown(conjunto, reports)
+    print(text)
+    if save:
+        print(f"salvo em {evaluate.save(conjunto, text)}")
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Pipeline de entrada de catálogo de hardware.")
     parser.add_argument(
@@ -142,6 +162,24 @@ def main(argv: list[str] | None = None) -> None:
         "status", help="fichas pendentes, rodadas, custo e produtos por categoria e destino"
     )
 
+    eval_parser = commands.add_parser(
+        "eval", help="compara os produtos de um conjunto com os gabaritos: acerto, fila e custo"
+    )
+    eval_parser.add_argument("--conjunto", choices=SETS, required=True)
+    eval_parser.add_argument(
+        "--comparar",
+        type=Path,
+        action="append",
+        default=[],
+        metavar="BANCO",
+        help="outro banco com o mesmo conjunto processado noutro modo: entra no resumo e no custo",
+    )
+    eval_parser.add_argument(
+        "--salvar",
+        action="store_true",
+        help="grava em docs/results.md (holdout) ou docs/results-dev.md (dev)",
+    )
+
     args = parser.parse_args(argv)
     conn = db.connect(args.db)
     try:
@@ -153,6 +191,8 @@ def main(argv: list[str] | None = None) -> None:
             print(route_line(route.route(conn)))
         elif args.command == "status":
             status(conn)
+        elif args.command == "eval":
+            run_eval(conn, args.conjunto, args.comparar, args.salvar)
     finally:
         conn.close()
 

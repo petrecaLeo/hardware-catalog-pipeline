@@ -321,3 +321,35 @@ def product_routes(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     return conn.execute(
         "SELECT ficha_id, categoria, destino, motivos, auditoria FROM produtos"
     ).fetchall()
+
+
+# --- Avaliação.
+
+
+def evaluated_products(conn: sqlite3.Connection, conjunto: str) -> list[sqlite3.Row]:
+    """Os produtos das fichas de um conjunto, com a última resposta da extração.
+
+    A avaliação mede o modelo: a resposta dele fica em `tentativas`, e `produtos.campos` pode ter
+    sido editado na revisão humana. A categoria e os motivos do roteamento vêm do produto.
+    """
+    return conn.execute(
+        "SELECT f.id_origem, p.categoria, p.destino, p.motivos, t.resposta "
+        "FROM fichas f JOIN produtos p ON p.ficha_id = f.id "
+        "LEFT JOIN tentativas t ON t.id = ("
+        "  SELECT MAX(id) FROM tentativas WHERE ficha_id = f.id AND etapa = 'extract') "
+        "WHERE f.conjunto = ? ORDER BY f.id",
+        (conjunto,),
+    ).fetchall()
+
+
+def costs_by_mode(conn: sqlite3.Connection, conjunto: str) -> list[sqlite3.Row]:
+    """O custo das fichas de um conjunto, por modo: fichas processadas (a mesma ficha em duas
+    rodadas conta duas vezes), chamadas, custo e o dia (hora local) da última chamada."""
+    return conn.execute(
+        "SELECT r.modo, COUNT(DISTINCT t.rodada_id || '-' || t.ficha_id) AS fichas, "
+        "COUNT(*) AS chamadas, TOTAL(t.custo) AS custo, "
+        "date(MAX(t.criado_em), 'localtime') AS dia "
+        "FROM tentativas t JOIN rodadas r ON r.id = t.rodada_id "
+        "JOIN fichas f ON f.id = t.ficha_id WHERE f.conjunto = ? GROUP BY r.modo ORDER BY r.modo",
+        (conjunto,),
+    ).fetchall()
