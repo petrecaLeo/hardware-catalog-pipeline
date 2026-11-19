@@ -248,8 +248,8 @@ def forget_tool_result(params):
     ]
 
 
-def unforce_tool(params):
-    params["tool_choice"] = {"type": "auto"}
+def force_a_missing_tool(params):
+    params["tool_choice"] = {"type": "tool", "name": "extrair_outra_coisa"}
 
 
 @pytest.mark.parametrize(
@@ -258,7 +258,7 @@ def unforce_tool(params):
         (drop_thinking, "thinking"),
         (add_prefill, "prefill"),
         (forget_tool_result, "tool_result"),
-        (unforce_tool, "tool_choice"),
+        (force_a_missing_tool, "tool_choice"),
     ],
 )
 def test_requests_the_real_api_refuses(change, message):

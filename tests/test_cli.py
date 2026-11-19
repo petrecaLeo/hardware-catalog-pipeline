@@ -6,6 +6,7 @@ from fastapi.testclient import TestClient
 import cli
 from pipeline import db
 from pipeline.config import ROOT_DIR
+from pipeline.fake_client import UNSCRIPTED
 from pipeline.sheets import SETS, load_sheets, sheets_path
 
 
@@ -73,17 +74,19 @@ def test_ingest_txt_folder(tmp_path, capsys):
     ]
 
 
-def test_serve_runs_the_review_page_only_on_this_machine(tmp_path, monkeypatch):
+def test_serve_runs_the_page_only_on_this_machine(tmp_path, monkeypatch):
     runs = []
     monkeypatch.setattr(cli.uvicorn, "run", lambda app, **options: runs.append((app, options)))
     db_file = tmp_path / "demo.db"
 
-    cli.main(["--db", str(db_file), "serve"])
+    cli.main(["--db", str(db_file), "serve", "--fake"])
 
     [(app, options)] = runs
     assert options == {"host": "127.0.0.1", "port": 8000}
-    # O app é o da revisão, com o banco pedido e a tela.
+    # O app é o da tela, com o banco pedido e, no --fake, o assistente com a API falsa.
     client = TestClient(app, base_url="http://127.0.0.1:8000")
     assert client.get("/api/summary").json()["catalogo"] == 0
     assert db_file.is_file()
     assert client.get("/").status_code == 200
+    answer = client.post("/api/chat", json={"pergunta": "Tem fonte?"}).json()["resposta"]
+    assert answer == f"{UNSCRIPTED}: o catálogo aprovado está vazio."

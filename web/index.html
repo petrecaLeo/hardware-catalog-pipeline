@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <!-- Só arquivos deste servidor: nada de fora, nem script embutido. -->
   <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:">
-  <title>Revisão do catálogo</title>
+  <title>Catálogo de hardware</title>
   <link rel="icon" href="data:,">
   <link rel="stylesheet" href="style.css">
   <script type="module" src="app.js"></script>
@@ -15,7 +15,7 @@
 
   <header class="topbar">
     <div class="topbar-row">
-      <p class="brand">Revisão do catálogo</p>
+      <p class="brand">Catálogo de hardware</p>
       <!-- Cada aba é um link aqui e uma <section data-view> em <main>. -->
       <nav class="tabs" aria-label="Seções">
         <a href="#revisao" data-tab="revisao">
@@ -24,6 +24,7 @@
         <a href="#catalogo" data-tab="catalogo">
           Catálogo <span class="tab-count" id="tab-count-catalogo"></span>
         </a>
+        <a href="#assistente" data-tab="assistente">Assistente</a>
       </nav>
     </div>
   </header>
@@ -125,6 +126,39 @@
         </table>
       </div>
       <p class="empty" id="catalog-empty" hidden>Nenhum produto no catálogo ainda.</p>
+    </section>
+
+    <section class="view view-assistant" data-view="assistente" aria-labelledby="assistant-title" hidden>
+      <div class="assistant">
+        <div class="assistant-head">
+          <h2 class="column-title" id="assistant-title">Assistente da loja</h2>
+          <p class="assistant-note">
+            Responde só com o catálogo aprovado. Embaixo de cada resposta, o custo das chamadas ao modelo.
+          </p>
+        </div>
+
+        <ol class="chat" id="chat" aria-label="Conversa" aria-live="polite"></ol>
+
+        <div class="chat-empty" id="chat-empty">
+          <p>Experimente perguntar:</p>
+          <ul class="suggestions">
+            <li><button type="button" class="suggestion">Qual a placa de vídeo mais barata com 12 GB?</button></li>
+            <li><button type="button" class="suggestion">Tem fonte de 850 W modular?</button></li>
+            <li><button type="button" class="suggestion">Quais SSDs NVMe leem acima de 5.000 MB/s?</button></li>
+          </ul>
+        </div>
+
+        <form class="ask" id="ask">
+          <label class="ask-label" for="question">Sua pergunta</label>
+          <textarea id="question" rows="2" maxlength="500" autocomplete="off"
+            placeholder="Ex.: tem gabinete mid tower com USB-C na frente?"></textarea>
+          <div class="ask-actions">
+            <p class="ask-hint">Enter envia; Shift+Enter quebra a linha.</p>
+            <button type="button" class="button" id="chat-clear" disabled>Limpar conversa</button>
+            <button type="submit" class="button button-primary" id="ask-send">Perguntar</button>
+          </div>
+        </form>
+      </div>
     </section>
   </main>
 </body>

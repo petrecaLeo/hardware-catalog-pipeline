@@ -1,6 +1,7 @@
-/* Tela de revisão. Sem fontes de fora: a do sistema, e a monoespaçada do sistema só no texto
-   original da ficha. Cores: o verde de placa de circuito no topo; amarelo e vermelho só para as
-   dúvidas e os erros, sempre com o texto junto ("dúvida média", "dúvida baixa"). */
+/* A tela (revisão, catálogo e assistente). Sem fontes de fora: a do sistema, e a monoespaçada do
+   sistema só no texto original da ficha. Cores: o verde de placa de circuito no topo; amarelo e
+   vermelho só para as dúvidas e os erros, sempre com o texto junto ("dúvida média",
+   "dúvida baixa"). */
 
 :root {
   --board: #0e4a38;
@@ -715,6 +716,162 @@ p {
   background: var(--accent-soft);
 }
 
+/* --- Assistente: uma coluna de leitura, com a caixa da pergunta presa embaixo. */
+
+.view-assistant {
+  padding: 22px 32px 0;
+}
+
+.assistant {
+  display: flex;
+  flex-direction: column;
+  max-width: 760px;
+  min-height: 100%;
+  margin: 0 auto;
+}
+
+.assistant-head {
+  display: grid;
+  gap: 4px;
+  margin-bottom: 20px;
+}
+
+.assistant-head .column-title {
+  font-size: 22px;
+}
+
+.assistant-note {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.chat {
+  display: grid;
+  gap: 20px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.turn {
+  display: grid;
+  gap: 8px;
+  scroll-margin-top: 16px;
+}
+
+.bubble {
+  max-width: min(85%, 640px);
+  padding: 10px 14px;
+  border-radius: 10px;
+  overflow-wrap: anywhere;
+}
+
+.bubble-question {
+  justify-self: end;
+  background: var(--accent-soft);
+  border: 1px solid #9cc9b2;
+  border-bottom-right-radius: 3px;
+  white-space: pre-wrap;
+}
+
+.bubble-answer {
+  justify-self: start;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-left: 4px solid var(--board);
+  border-bottom-left-radius: 3px;
+}
+
+/* A resposta é texto simples: as quebras de linha da lista de produtos ficam. */
+.answer-text {
+  white-space: pre-wrap;
+}
+
+.answer-cost {
+  margin-top: 8px;
+  padding-top: 6px;
+  border-top: 1px solid var(--line-soft);
+  color: var(--muted);
+  font-size: 12.5px;
+}
+
+.bubble-pending {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.chat-empty {
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.suggestions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 8px 0 0;
+  padding: 0;
+  list-style: none;
+}
+
+.suggestion {
+  padding: 7px 14px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-size: 14px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.suggestion:hover {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.ask {
+  position: sticky;
+  bottom: 0;
+  display: grid;
+  gap: 6px;
+  margin-top: auto;
+  padding: 18px 0;
+  background: var(--bench);
+}
+
+.ask-label {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.ask textarea {
+  width: 100%;
+  min-height: 64px;
+  padding: 10px 12px;
+  border: 1px solid var(--control);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  resize: vertical;
+}
+
+.ask-actions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.ask-hint {
+  margin-right: auto;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 /* --- Avisos (aprovada, rejeitada, erro do servidor): embaixo, à esquerda, sobre o fim da fila; no
    celular, em cima, para não cobrir os botões. */
 
@@ -805,12 +962,18 @@ p {
     column-gap: 16px;
   }
 
+  /* Numa tela estreita (320 px), as abas que não cabem rolam dentro da barra, e não a página. */
   .tabs {
     min-height: 44px;
+    max-width: 100%;
+    overflow-x: auto;
+    scrollbar-width: none;
   }
 
   .tabs a {
+    flex: none;
     padding: 0 10px;
+    white-space: nowrap;
   }
 
   .summary {
@@ -820,6 +983,18 @@ p {
   .sheet-column,
   .view-catalog {
     padding: 18px 16px 28px;
+  }
+
+  .view-assistant {
+    padding: 18px 16px 0;
+  }
+
+  .bubble {
+    max-width: 92%;
+  }
+
+  .ask-hint {
+    display: none;
   }
 
   .paper {

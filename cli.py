@@ -210,10 +210,15 @@ def export_corrections(conn, path: Path) -> None:
     print(f"{len(lines)} correções exportadas para {path}")
 
 
-def serve(db_file: Path) -> None:
-    """A tela de revisão, só para esta máquina (127.0.0.1)."""
-    print(f"tela de revisão em http://{HOST}:{PORT} (banco: {db_file}; Ctrl-C para parar)")
-    uvicorn.run(create_app(db_file), host=HOST, port=PORT)
+def serve(db_file: Path, fake: bool) -> None:
+    """A tela (revisão, catálogo e assistente), só para esta máquina (127.0.0.1)."""
+    api = "API falsa" if fake else "API real"
+    print(
+        f"tela em http://{HOST}:{PORT} (banco: {db_file}; assistente com a {api}; Ctrl-C para"
+        " parar)"
+    )
+    client = FakeAPI().client if fake else None
+    uvicorn.run(create_app(db_file, client), host=HOST, port=PORT)
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -288,13 +293,20 @@ def main(argv: list[str] | None = None) -> None:
         help="arquivo .jsonl gerado (padrão: data/corrections.jsonl)",
     )
 
-    commands.add_parser(
-        "serve", help=f"abre a tela de revisão em http://{HOST}:{PORT}, só nesta máquina"
+    serve_parser = commands.add_parser(
+        "serve",
+        help=f"abre a tela (revisão, catálogo e assistente) em http://{HOST}:{PORT}, só nesta"
+        " máquina",
+    )
+    serve_parser.add_argument(
+        "--fake",
+        action="store_true",
+        help="o assistente usa a API falsa: sem chave e sem custo, mas não lê a pergunta",
     )
 
     args = parser.parse_args(argv)
     if args.command == "serve":
-        serve(args.db)
+        serve(args.db, args.fake)
         return
     conn = db.connect(args.db)
     try:

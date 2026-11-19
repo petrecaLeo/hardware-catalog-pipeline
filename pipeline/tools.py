@@ -13,8 +13,9 @@ from pipeline.schemas import MODELS, Classification
 
 
 def _drop_titles(node):
-    # O Pydantic põe um "title" em cada campo ("Tdp W", "Clock Boost Ghz"). O modelo não precisa
-    # dele, e ele custa uns 12% do molde em todo pedido. Nenhum campo se chama "title".
+    # O "title" de cada campo é o rótulo da tela ("TDP (W)") ou, sem rótulo, o que o Pydantic
+    # inventa ("Tdp W"). O modelo não precisa dele, e ele custaria uns 12% do molde em todo
+    # pedido. Nenhum campo se chama "title".
     if isinstance(node, dict):
         return {key: _drop_titles(value) for key, value in node.items() if key != "title"}
     if isinstance(node, list):
@@ -22,7 +23,8 @@ def _drop_titles(node):
     return node
 
 
-def _input_schema(model) -> dict:
+def input_schema(model) -> dict:
+    """O schema strict de um modelo Pydantic, sem os title."""
     return _drop_titles(transform_schema(model))
 
 
@@ -30,7 +32,7 @@ CLASSIFY_TOOL = {
     "name": "classificar_produto",
     "description": "Registra a categoria do produto descrito numa ficha técnica de fornecedor.",
     "strict": True,
-    "input_schema": _input_schema(Classification),
+    "input_schema": input_schema(Classification),
 }
 
 EXTRACT_TOOLS = {
@@ -43,7 +45,7 @@ EXTRACT_TOOLS = {
             "o produto. Nos campos true/false, use false só quando o texto diz que não tem."
         ),
         "strict": True,
-        "input_schema": _input_schema(model),
+        "input_schema": input_schema(model),
     }
     for category, model in MODELS.items()
 }

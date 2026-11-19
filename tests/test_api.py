@@ -2,13 +2,15 @@ import json
 import re
 import shutil
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 from fastapi.testclient import TestClient
 
-from api.main import WEB_DIR, create_app
+from api.main import MAX_ANSWER_CHARS, MAX_HISTORY_TURNS, NO_KEY, WEB_DIR, create_app
 from pipeline import batch, db, extract, route
-from pipeline.fake_client import DOUBT_REASON, WRONG_WARRANTY, FakeAPI
+from pipeline.assistant import brl
+from pipeline.fake_client import DOUBT_REASON, UNSCRIPTED, WRONG_WARRANTY, FakeAPI
 from pipeline.schemas import PRODUCT_MODELS
 from pipeline.sheets import load_sheets, sheets_path, split_answer_key
 
@@ -19,6 +21,7 @@ SHEETS = {sheet["id"]: sheet for sheet in load_sheets(sheets_path("dev"))}
 # O outro processador vai para o catálogo.
 DIRECT = ("dev-001", "dev-002", "dev-003")
 IN_BATCH = ("dev-029", "dev-030", "dev-031")
+JSON = {"content-type": "application/json"}
 
 
 @pytest.fixture(scope="module")
@@ -145,6 +148,9 @@ def test_sheet_shows_text_extraction_errors_attempts_and_form(client, conn):
         "ventoinha_mm": "inteiro",
     }
     assert form["modularidade"]["opcoes"] == ["nao_modular", "semi_modular", "modular"]
+    # O rótulo legível vem do esquema.
+    assert form["garantia_meses"]["rotulo"] == "Garantia (meses)"
+    assert form["potencia_w"]["rotulo"] == "Potência (W)"
     assert [name for name, field in form.items() if not field["aceita_null"]] == ["nome"]
     assert form["potencia_w"]["descricao"].endswith("Não é o pico.")
 
@@ -317,7 +323,7 @@ def test_decisions_only_from_the_queue_and_unknown_sheet(client, conn):
 
 
 def test_other_host_and_post_without_json_are_refused(db_file, conn):
-    app = create_app(db_file)
+    app = create_app(db_file, FakeAPI().client)
     # Um site que se passa por 127.0.0.1 (DNS rebinding) manda o nome dele no Host.
     for host, status in [("evil.example", 400), ("localhost", 200), ("127.0.0.1", 200)]:
         response = TestClient(app, base_url=f"http://{host}:8000").get("/api/queue")
@@ -329,6 +335,12 @@ def test_other_host_and_post_without_json_are_refused(db_file, conn):
     response = local.post(
         f"/api/sheets/{sheet_id}/reject", content="{}", headers={"content-type": "text/plain"}
     )
+    assert response.status_code == 415
+    # O assistente também, porque cada pergunta gasta: outro Host e um POST sem JSON não passam.
+    chat = '{"pergunta": "Tem fonte?"}'
+    other = TestClient(app, base_url="http://evil.example:8000")
+    assert other.post("/api/chat", content=chat, headers=JSON).status_code == 400
+    response = local.post("/api/chat", content=chat, headers={"content-type": "text/plain"})
     assert response.status_code == 415
     assert product(conn, sheet_id)[0] == "revisao"
     assert reviews(conn) == []
@@ -374,6 +386,77 @@ def test_summary_matches_the_database(client, conn, tmp_path):
             "total": pytest.approx(total),
         },
     }
+
+
+def chat_client(db_file, api):
+    return TestClient(create_app(db_file, api.client), base_url="http://127.0.0.1:8000")
+
+
+def test_chat_answers_from_the_catalog_and_sees_the_approvals(db_file, conn):
+    # A API falsa sem roteiro busca o catálogo inteiro e responde com o mais barato.
+    api = FakeAPI()
+    client = chat_client(db_file, api)
+
+    def expected():
+        products = list(catalog(client).values())
+        cheapest = min(products, key=lambda fields: fields["preco"])
+        return (
+            f"{UNSCRIPTED}: o catálogo aprovado tem {len(products)} produtos. O mais barato é "
+            f"{cheapest['nome']}, por {brl(cheapest['preco'])}."
+        )
+
+    history = [{"pergunta": "Oi", "resposta": "Olá! Posso ajudar com o catálogo."}]
+    response = client.post("/api/chat", json={"pergunta": "Tem fonte?", "historico": history})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["resposta"], body["chamadas"]) == (expected(), 2)
+    assert body["custo"] > 0
+    # O histórico vai ao modelo antes da pergunta, só com o texto.
+    assert api.requests[0]["messages"] == [
+        {"role": "user", "content": "Oi"},
+        {"role": "assistant", "content": "Olá! Posso ajudar com o catálogo."},
+        {"role": "user", "content": "Tem fonte?"},
+    ]
+
+    # A aprovação na revisão aparece na próxima pergunta.
+    before = len(catalog(client))
+    client.post(f"/api/sheets/{ids(conn)['dev-031']}/approve", json={})
+    response = client.post("/api/chat", json={"pergunta": "E agora?"})
+    assert len(catalog(client)) == before + 1
+    assert response.json()["resposta"] == expected()
+
+
+TURN = {"pergunta": "Tem fonte?", "resposta": "Tem, sim."}
+
+
+@pytest.mark.parametrize(
+    "body",
+    [
+        {"pergunta": "   "},
+        {"pergunta": "Tem SSD?", "historico": [TURN] * (MAX_HISTORY_TURNS + 1)},
+        {"pergunta": "Tem SSD?", "historico": [TURN | {"resposta": "x" * (MAX_ANSWER_CHARS + 1)}]},
+        {"pergunta": "Tem SSD?", "historico": [{"papel": "usuario", "texto": "Tem fonte?"}]},
+    ],
+)
+def test_chat_with_an_invalid_history_is_422_and_never_calls_the_model(db_file, body):
+    api = FakeAPI()
+    response = chat_client(db_file, api).post("/api/chat", json=body)
+
+    assert response.status_code == 422
+    assert all(error["mensagem"] for error in response.json()["detail"])
+    assert api.requests == []
+
+
+def test_chat_without_an_api_key_says_what_to_do(db_file):
+    # Como fica o cliente real quando nada configura a chave (nem o .env). Sem a checagem, ele só
+    # falharia na hora da chamada, com um 500.
+    no_key = SimpleNamespace(api_key=None, auth_token=None, credentials=None)
+    client = TestClient(create_app(db_file, no_key), base_url="http://127.0.0.1:8000")
+
+    response = client.post("/api/chat", json={"pergunta": "Tem fonte?"})
+
+    assert (response.status_code, response.json()) == (503, {"detail": NO_KEY})
 
 
 # O tipo do .js sai da tabela de tipos do sistema: 'text/javascript' ou 'application/javascript'.

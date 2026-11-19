@@ -3,13 +3,15 @@ import re
 
 import pytest
 
+from pipeline.assistant import TOOLS as ASSISTANT_TOOLS
 from pipeline.schemas import CATEGORIES, PRODUCT_MODELS
 from pipeline.tools import CLASSIFY_TOOL, EXTRACT_TOOLS
 
-# Limite do strict, somado por pedido. Cada pedido leva um molde só.
+# Limite do strict, somado por pedido. A classificação e a extração levam um molde por pedido; o
+# assistente leva as suas duas ferramentas juntas.
 MAX_UNIONS = 16
 
-TOOLS = [CLASSIFY_TOOL, *EXTRACT_TOOLS.values()]
+TOOLS = [CLASSIFY_TOOL, *EXTRACT_TOOLS.values(), *ASSISTANT_TOOLS]
 TOOL_IDS = [tool["name"] for tool in TOOLS]
 
 
@@ -48,6 +50,10 @@ def test_unions_fit_the_limit(tool):
     assert count_unions(tool["input_schema"]) <= MAX_UNIONS
 
 
+def test_assistant_request_fits_the_limit():
+    assert sum(count_unions(tool["input_schema"]) for tool in ASSISTANT_TOOLS) <= MAX_UNIONS
+
+
 @pytest.mark.parametrize("tool", TOOLS, ids=TOOL_IDS)
 def test_every_field_has_a_description(tool):
     for node in objects(tool["input_schema"]):
@@ -81,6 +87,8 @@ def test_classification_lists_every_category():
     assert properties["categoria"]["enum"] == list(CATEGORIES)
 
 
-def test_tools_are_plain_json():
+def test_tools_are_plain_json_without_labels():
     # A ida e volta pelo JSON pega o que não é JSON puro (tupla, tipo do Python, objeto).
     assert json.loads(json.dumps(TOOLS)) == TOOLS
+    # Os rótulos da tela (o "title" dos campos) não vão para os moldes, pagos em todo pedido.
+    assert not [node for tool in TOOLS for node in nodes(tool["input_schema"]) if "title" in node]

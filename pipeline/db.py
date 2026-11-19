@@ -437,3 +437,58 @@ def edited_approvals(conn: sqlite3.Connection) -> list[sqlite3.Row]:
 def total_cost(conn: sqlite3.Connection) -> float:
     """O custo de todas as chamadas gravadas, em US$."""
     return conn.execute("SELECT TOTAL(custo) FROM tentativas").fetchone()[0]
+
+
+# --- Assistente da loja (assistant.py). Só lê, e só o catálogo: `destino = 'catalogo'`.
+
+# Os operadores dos filtros. O SQL só recebe um destes, nunca o texto que veio do modelo.
+FILTER_OPERATORS = {"igual": "=", "minimo": ">=", "maximo": "<=", "acima": ">", "abaixo": "<"}
+
+
+def search_catalog(
+    conn: sqlite3.Connection,
+    categoria: str | None,
+    words: list[str],
+    preco_max: float | None,
+    filters: list[tuple[str, str, object]],
+) -> list[sqlite3.Row]:
+    """Os produtos do catálogo que passam em todos os filtros, do mais barato ao mais caro (os sem
+    preço no fim): id, categoria e campos.
+
+    - `words`: cada palavra tem que aparecer no nome ou na marca (sem diferença de caixa);
+    - `filters`: `(campo, operador, valor)`, com o campo já conferido contra o esquema da
+      categoria (assistant.py). Mesmo assim, o campo entra como parâmetro (o caminho do
+      json_extract) e o operador sai de FILTER_OPERATORS: nada do modelo é colado no SQL. Texto
+      compara sem diferença de caixa; um campo null não passa em nenhum filtro.
+    """
+    sql = "SELECT ficha_id AS id, categoria, campos FROM produtos WHERE destino = 'catalogo'"
+    params = []
+    if categoria is not None:
+        sql += " AND categoria = ?"
+        params.append(categoria)
+    for word in words:
+        sql += (
+            " AND instr(lower(json_extract(campos, '$.nome') || ' ' || "
+            "ifnull(json_extract(campos, '$.marca'), '')), lower(?)) > 0"
+        )
+        params.append(word)
+    if preco_max is not None:
+        sql += " AND json_extract(campos, '$.preco') <= ?"
+        params.append(preco_max)
+    for campo, operador, valor in filters:
+        sql += f" AND json_extract(campos, ?) {FILTER_OPERATORS[operador]} ? COLLATE NOCASE"
+        params += [f"$.{campo}", valor]
+    sql += (
+        " ORDER BY json_extract(campos, '$.preco') IS NULL, json_extract(campos, '$.preco'),"
+        " ficha_id"
+    )
+    return conn.execute(sql, params).fetchall()
+
+
+def catalog_product(conn: sqlite3.Connection, ficha_id: int) -> sqlite3.Row | None:
+    """Um produto do catálogo (id, categoria e campos), ou None se ele não está no catálogo."""
+    return conn.execute(
+        "SELECT ficha_id AS id, categoria, campos FROM produtos "
+        "WHERE ficha_id = ? AND destino = 'catalogo'",
+        (ficha_id,),
+    ).fetchone()

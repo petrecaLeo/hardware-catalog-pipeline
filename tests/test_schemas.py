@@ -21,6 +21,13 @@ def test_valid_example_passes(category):
     PRODUCT_MODELS[category].model_validate(answer_key)
 
 
+def test_every_field_has_a_label():
+    # O rótulo da tela ("Garantia (meses)"): a etapa que acrescentar um campo também dá o rótulo.
+    for model in PRODUCT_MODELS.values():
+        for name, info in model.model_fields.items():
+            assert info.title and info.title != name, name
+
+
 def test_text_instead_of_number_is_a_format_error():
     data = {**EXAMPLES["processador"], "nucleos": "8"}
     assert format_error("processador", data) == ("int_type", ("nucleos",))

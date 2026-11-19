@@ -34,3 +34,8 @@ EXTRACT_RETRY_MAX_TOKENS = 900
 EXTRA_ATTEMPTS = 2
 # Modo lote: de quantos em quantos segundos o lote é consultado até terminar (0 com a API falsa).
 BATCH_POLL_SECONDS = 30
+
+# Assistente da loja: max_tokens de cada chamada (a resposta final é curta) e o máximo de chamadas
+# ao modelo por pergunta. Se a última ainda pedir ferramenta, o laço para e avisa, sem resposta.
+ASSISTANT_MAX_TOKENS = 500
+ASSISTANT_MAX_CALLS = 5

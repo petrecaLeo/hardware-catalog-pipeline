@@ -1,5 +1,6 @@
-"""API da revisão humana: a fila, a ficha com a extração, aprovar (com edições) ou rejeitar, o
-catálogo e o resumo. A tela (web/) é servida na raiz, pelo mesmo servidor.
+"""API da tela: a revisão humana (a fila, a ficha com a extração, aprovar com edições ou
+rejeitar), o catálogo, o resumo e o assistente da loja. A tela (web/) é servida na raiz, pelo mesmo
+servidor.
 
 O `{id}` das rotas é o id da ficha no banco (`fichas.id`), que também é o id do produto. O
 `id_origem` ('dev-030', 'fonte.txt') vem junto nas respostas só para mostrar: ele não é único.
@@ -14,40 +15,54 @@ ficha só em dólar. Inválido → 422 com `{"detail": [{campo, mensagem}]}`. To
 formato, também o do pedido fora do formato. A categoria não muda: um produto classificado na
 categoria errada é rejeitado.
 
+O assistente (`POST /api/chat`) responde a uma pergunta com o catálogo aprovado (assistant.py). O
+histórico da conversa fica no navegador, que manda a pergunta e as trocas anteriores (só o texto:
+pergunta e resposta), e o servidor refaz o laço a cada pergunta. O tamanho do histórico tem
+limite, para um pedido não virar um gasto sem controle. A resposta traz o custo das chamadas. Sem
+a chave da API, ele responde 503 com o que fazer; uma falha da API do modelo vira 502.
+
 Só esta máquina acessa: o servidor escuta em 127.0.0.1 e recusa outro Host (um site que se passa
 por 127.0.0.1 com DNS rebinding manda o nome dele no Host). Os POST só aceitam JSON: um formulário
 de outro site aberto no navegador manda um POST sem perguntar nada, mas um POST em JSON para outra
 origem passa antes pela permissão do CORS, que esta API não dá.
 
-Uso: `create_app(db_file)` (`cli.py serve` roda em 127.0.0.1:8000). Cada pedido abre a sua conexão
-com o banco e fecha no fim.
+Uso: `create_app(db_file, client)` (`cli.py serve` roda em 127.0.0.1:8000). O `client` é o do
+assistente (o real, se não vier). Cada pedido abre a sua conexão com o banco e fecha no fim.
 """
 
 import json
 from collections import Counter
 from pathlib import Path
-from types import NoneType
-from typing import Literal, get_args, get_origin
+from typing import Annotated
 
+import anthropic
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from fastapi.staticfiles import StaticFiles
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, StringConstraints
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
-from pipeline import db, route
+from pipeline import assistant, db, route
 from pipeline.config import DB_FILE, ROOT_DIR
 from pipeline.rules import validate_product
-from pipeline.schemas import PRODUCT_MODELS
+from pipeline.schemas import field_specs
 
 HOST = "127.0.0.1"
 PORT = 8000
 ALLOWED_HOSTS = [HOST, "localhost"]
 WEB_DIR = ROOT_DIR / "web"
-
-# O tipo de cada campo no formulário. O esquema é strict: o número vai como número ("8" não vale).
-FIELD_KINDS = {str: "texto", int: "inteiro", float: "numero", bool: "booleano"}
+# Os limites do pedido ao assistente. Cada pergunta manda o histórico inteiro ao modelo em todas as
+# chamadas dela, então o tamanho do histórico é o que pesa no custo. A tela manda só as últimas
+# MAX_HISTORY_TURNS trocas e limita a pergunta a MAX_QUESTION_CHARS.
+MAX_HISTORY_TURNS = 6
+MAX_QUESTION_CHARS = 500
+MAX_ANSWER_CHARS = 3000
+# Sem chave, o cliente real só falharia na hora da chamada (um TypeError, que viraria um 500).
+NO_KEY = (
+    "O assistente precisa da chave da API: configure a ANTHROPIC_API_KEY no .env ou rode o serve "
+    "com --fake."
+)
 
 
 class Approval(BaseModel):
@@ -58,30 +73,34 @@ class Approval(BaseModel):
     campos: dict | None = None
 
 
-def form_fields(category: str) -> list[dict]:
-    """Os campos do produto da categoria, na ordem do esquema, com o que a tela precisa para
-    montar o formulário e mandar cada valor no tipo certo: o tipo, as opções (enum), se aceita
-    null e a descrição (a mesma que orienta o modelo)."""
-    fields = []
-    for name, info in PRODUCT_MODELS[category].model_fields.items():
-        args = get_args(info.annotation)
-        nullable = NoneType in args
-        [kind] = [arg for arg in args if arg is not NoneType] if nullable else [info.annotation]
-        options = list(get_args(kind)) if get_origin(kind) is Literal else None
-        fields.append(
-            {
-                "campo": name,
-                "tipo": "opcao" if options else FIELD_KINDS[kind],
-                "opcoes": options,
-                "aceita_null": nullable,
-                "descricao": info.description,
-            }
-        )
-    return fields
+Question = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_QUESTION_CHARS)
+]
+AnswerText = Annotated[
+    str, StringConstraints(strip_whitespace=True, min_length=1, max_length=MAX_ANSWER_CHARS)
+]
 
 
-def create_app(db_file: Path | str = DB_FILE) -> FastAPI:
-    app = FastAPI(title="Revisão do catálogo")
+class Turn(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pergunta: Question
+    resposta: AnswerText
+
+
+class Chat(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    pergunta: Question
+    # As trocas anteriores, da mais antiga à mais nova.
+    historico: list[Turn] = Field(default=[], max_length=MAX_HISTORY_TURNS)
+
+
+def create_app(db_file: Path | str = DB_FILE, client=None) -> FastAPI:
+    app = FastAPI(title="Catálogo de hardware")
+    if client is None:
+        # O cliente real do assistente. A chave só é pedida na hora de chamar o modelo.
+        client = anthropic.Anthropic()
 
     @app.middleware("http")
     async def json_posts_only(request: Request, call_next):
@@ -157,7 +176,7 @@ def create_app(db_file: Path | str = DB_FILE) -> FastAPI:
             "erros": json.loads(row["erros"]),
             "destino": row["destino"],
             "motivos": json.loads(row["motivos"]),
-            "formulario": form_fields(row["categoria"]),
+            "formulario": field_specs(row["categoria"]),
             "tentativas": [dict(attempt) for attempt in db.sheet_attempts(conn, ficha_id)],
         }
 
@@ -213,6 +232,17 @@ def create_app(db_file: Path | str = DB_FILE) -> FastAPI:
             "rejeitados": counts["rejeitado"],
             "custo": {"ultima_rodada": last_round, "total": db.total_cost(conn)},
         }
+
+    @app.post("/api/chat")
+    def chat(body: Chat, conn=Depends(connection)):
+        if not (client.api_key or client.auth_token or client.credentials):
+            raise HTTPException(503, NO_KEY)
+        history = [(turn.pergunta, turn.resposta) for turn in body.historico]
+        try:
+            reply = assistant.answer(client, conn, body.pergunta, history)
+        except anthropic.APIError as error:
+            raise HTTPException(502, f"A API do modelo falhou: {error.message}") from error
+        return {"resposta": reply.text, "chamadas": reply.calls, "custo": reply.cost}
 
     # A tela, por último: as rotas da API acima têm a preferência. "/" abre o index.html.
     app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")

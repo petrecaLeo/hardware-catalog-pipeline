@@ -1,5 +1,5 @@
-// Tela da revisão humana: a fila, a ficha original e os campos extraídos, que o revisor corrige,
-// aprova ou rejeita; e o catálogo aprovado.
+// A tela: a revisão humana (a fila, a ficha original e os campos extraídos, que o revisor corrige,
+// aprova ou rejeita), o catálogo aprovado e o assistente da loja.
 //
 // O texto das fichas vem de fornecedor: todo dado da API entra na página por textContent, nunca
 // como HTML. Os POST vão sempre em JSON (a API recusa outro formato).
@@ -28,6 +28,8 @@ const state = {
   initial: {}, // o formulário como foi aberto, para saber o que o revisor mudou
   catalog: [],
   approvedNow: new Set(), // aprovadas nesta visita: aparecem primeiro no catálogo, marcadas
+  chat: [], // a conversa com o assistente: [{pergunta, resposta}], da mais antiga à mais nova
+  asking: false, // uma pergunta esperando resposta
   navigation: 0, // a navegação mais recente; uma resposta de uma navegação antiga é ignorada
 };
 
@@ -77,7 +79,9 @@ async function request(path, body) {
 }
 
 function errorText(status, data) {
-  return typeof data?.detail === "string" ? data.detail : `O servidor respondeu ${status}.`;
+  if (typeof data?.detail === "string") return data.detail;
+  if (Array.isArray(data?.detail)) return data.detail.map((error) => error.mensagem).join(" ");
+  return `O servidor respondeu ${status}.`;
 }
 
 async function getJSON(path) {
@@ -101,9 +105,9 @@ function announce(message, kind = "info") {
 const showError = (error) => announce(error.message, "error");
 
 // --- Abas. Cada aba tem um link no <nav>, uma <section data-view> e uma função aqui, que a mostra.
-// O endereço guarda a aba e a ficha aberta: #revisao/37, #catalogo.
+// O endereço guarda a aba e a ficha aberta: #revisao/37, #catalogo, #assistente.
 
-const VIEWS = { revisao: showReview, catalogo: showCatalog };
+const VIEWS = { revisao: showReview, catalogo: showCatalog, assistente: showAssistant };
 
 function route({ userAction = true } = {}) {
   const [name, id] = location.hash.slice(1).split("/");
@@ -253,6 +257,9 @@ function openSheet(sheet) {
 // --- Revisão: o formulário, montado a partir do `formulario` da API (tipo, opções, null).
 
 const inputId = (name) => `campo-${name}`;
+// O rótulo do campo ("Garantia (meses)"), que vem do esquema; o nome do dado, se não houver.
+const fieldLabel = (campo) =>
+  state.sheet?.formulario.find((field) => field.campo === campo)?.rotulo ?? campo;
 
 function displayValue(field, value) {
   if (value === null || value === undefined) return "";
@@ -321,7 +328,7 @@ function makeInput(field, value) {
 function fieldBlock(field, doubt) {
   const id = inputId(field.campo);
   const input = makeInput(field, state.sheet.campos[field.campo] ?? null);
-  const label = el("label", { text: field.campo, attrs: { for: id } });
+  const label = el("label", { text: fieldLabel(field.campo), attrs: { for: id } });
   const head = el("div", { className: "field-head" }, [label]);
   const block = el("div", { className: "field", attrs: { "data-campo": field.campo } }, [head, input]);
   const described = [];
@@ -351,9 +358,9 @@ function fieldBlock(field, doubt) {
   return block;
 }
 
-// Um botão com o nome do campo, que leva até ele (na lista de dúvidas e na de erros).
+// Um botão com o rótulo do campo, que leva até ele (na lista de dúvidas e na de erros).
 function jumpTo(campo) {
-  const button = el("button", { className: "link", text: campo, attrs: { type: "button" } });
+  const button = el("button", { className: "link", text: fieldLabel(campo), attrs: { type: "button" } });
   button.addEventListener("click", () => $(inputId(campo)).focus());
   return button;
 }
@@ -536,6 +543,76 @@ function renderCatalog() {
   $("catalog-empty").hidden = state.catalog.length > 0;
 }
 
+// --- Assistente. A conversa fica só na memória da página: cada pergunta vai ao servidor com as
+// últimas trocas (pergunta e resposta), e ele refaz a busca no catálogo.
+
+const HISTORY_TURNS = 6; // o MAX_HISTORY_TURNS da API: ela recusa um histórico maior
+
+async function showAssistant(_id, userAction) {
+  if (userAction) $("question").focus();
+}
+
+function answerBubble({ resposta, chamadas, custo }) {
+  const calls = chamadas === 1 ? "1 chamada ao modelo" : `${chamadas} chamadas ao modelo`;
+  return el("div", { className: "bubble bubble-answer" }, [
+    // "R$" e o número na mesma linha: o espaço vira um espaço que não quebra.
+    el("p", { className: "answer-text", text: resposta.replace(/R\$ (?=\d)/g, "R$\u00a0") }),
+    el("p", { className: "answer-cost", text: `${money(custo)} · ${calls}` }),
+  ]);
+}
+
+function setAsking(asking) {
+  state.asking = asking;
+  $("ask-send").disabled = asking;
+  $("ask-send").textContent = asking ? "Pensando..." : "Perguntar";
+  $("chat-clear").disabled = asking || state.chat.length === 0;
+  $("chat-empty").hidden = asking || state.chat.length > 0;
+}
+
+async function ask(question) {
+  const historico = state.chat
+    .slice(-HISTORY_TURNS)
+    .map(({ pergunta, resposta }) => ({ pergunta, resposta }));
+  const pending = el("p", { className: "bubble bubble-answer bubble-pending", text: "pensando..." });
+  const turn = el("li", { className: "turn" }, [
+    el("p", { className: "bubble bubble-question", text: question }),
+    pending,
+  ]);
+  $("chat").append(turn);
+  $("question").value = "";
+  setAsking(true);
+  // A troca nova no alto da tela (ou o fim da conversa, se ela couber): a caixa da pergunta, presa
+  // embaixo, não cobre a resposta curta, e a longa aparece do começo.
+  turn.scrollIntoView({ block: "start" });
+  try {
+    const { ok, status, data } = await request("/api/chat", { pergunta: question, historico });
+    if (!ok) throw new Error(errorText(status, data));
+    state.chat.push({ pergunta: question, resposta: data.resposta });
+    pending.replaceWith(answerBubble(data));
+    turn.scrollIntoView({ block: "start" });
+  } catch (error) {
+    // A pergunta volta para a caixa, para tentar de novo.
+    turn.remove();
+    if (!$("question").value) $("question").value = question;
+    showError(error);
+  } finally {
+    setAsking(false);
+  }
+}
+
+function onAsk(event) {
+  event.preventDefault();
+  const question = $("question").value.trim();
+  if (question && !state.asking) ask(question);
+}
+
+function clearChat() {
+  state.chat = [];
+  $("chat").replaceChildren();
+  setAsking(false);
+  $("question").focus();
+}
+
 // --- Início.
 
 $("approve").addEventListener("click", () => decide("approve"));
@@ -544,6 +621,22 @@ $("reject").addEventListener("click", () => decide("reject"));
 $("form").addEventListener("input", onEdit);
 $("form").addEventListener("submit", (event) => event.preventDefault());
 $("catalog-filter").addEventListener("input", renderCatalog);
+$("ask").addEventListener("submit", onAsk);
+$("question").addEventListener("keydown", (event) => {
+  // Enter envia; Shift+Enter quebra a linha.
+  if (event.key === "Enter" && !event.shiftKey && !event.isComposing) {
+    event.preventDefault();
+    $("ask").requestSubmit();
+  }
+});
+$("chat-clear").addEventListener("click", clearChat);
+for (const button of document.querySelectorAll(".suggestion")) {
+  // A sugestão vai para a caixa; quem envia é a pessoa (cada pergunta custa uma chamada real).
+  button.addEventListener("click", () => {
+    $("question").value = button.textContent;
+    $("question").focus();
+  });
+}
 // O "pular para o conteúdo" só leva o foco: mudar o endereço trocaria de aba.
 document.querySelector(".skip-link").addEventListener("click", (event) => {
   event.preventDefault();
