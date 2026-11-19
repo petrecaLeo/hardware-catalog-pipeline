@@ -1,11 +1,12 @@
 import json
+import re
 import shutil
 from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
 
-from api.main import create_app
+from api.main import WEB_DIR, create_app
 from pipeline import batch, db, extract, route
 from pipeline.fake_client import DOUBT_REASON, WRONG_WARRANTY, FakeAPI
 from pipeline.schemas import PRODUCT_MODELS
@@ -26,7 +27,7 @@ def filled_db(tmp_path_factory):
     path = tmp_path_factory.mktemp("api") / "catalog.db"
     conn = db.connect(path)
     db.add_sheets(conn, "dev", [(i, SHEETS[i]["texto"]) for i in DIRECT + IN_BATCH])
-    api = FakeAPI(wrong_always={"dev-030"}, doubts={"dev-001": ("tdp_w", "baixa")})
+    api = FakeAPI(wrong_always={"dev-030"}, doubts={"dev-001": {"tdp_w": "baixa"}})
     extract.process(api.client, conn, limit=len(DIRECT))
     batch.process(api.client, conn, poll_seconds=0)
     route.route(conn)
@@ -373,3 +374,36 @@ def test_summary_matches_the_database(client, conn, tmp_path):
             "total": pytest.approx(total),
         },
     }
+
+
+# O tipo do .js sai da tabela de tipos do sistema: 'text/javascript' ou 'application/javascript'.
+WEB_FILES = [("/", "text/html"), ("/app.js", "javascript"), ("/style.css", "text/css")]
+
+
+def test_review_page_and_its_files_are_served(db_file):
+    app = create_app(db_file)
+    local = TestClient(app, base_url="http://127.0.0.1:8000")
+    for path, kind in WEB_FILES:
+        response = local.get(path)
+        assert response.status_code == 200
+        assert kind in response.headers["content-type"]
+    page = local.get("/").text
+    assert '<script type="module" src="app.js"></script>' in page
+    assert '<link rel="stylesheet" href="style.css">' in page
+    # As rotas da API continuam na frente dos arquivos.
+    assert local.get("/api/queue").headers["content-type"] == "application/json"
+
+    # O Host errado continua recusado, também na tela.
+    other = TestClient(app, base_url="http://evil.example:8000")
+    for path, _ in WEB_FILES:
+        response = other.get(path)
+        assert (response.status_code, response.text) == (400, "Invalid host header")
+
+
+def test_page_is_self_contained_and_never_writes_html():
+    # Funciona sem internet (nada de CDN), e o texto das fichas, que vem de fornecedor, nunca
+    # entra na página como HTML.
+    for path in WEB_DIR.iterdir():
+        assert not re.search(r"https?://", path.read_text(encoding="utf-8")), path.name
+    script = (WEB_DIR / "app.js").read_text(encoding="utf-8")
+    assert not re.search(r"innerHTML|outerHTML|insertAdjacentHTML|document\.write", script)

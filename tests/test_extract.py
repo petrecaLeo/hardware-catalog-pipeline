@@ -193,13 +193,19 @@ def test_cli_processes_all_sheets_with_the_fake_api(tmp_path, capsys):
     cli.main(["--db", db_file, "process", "--direto", "--fake"])
 
     lines = capsys.readouterr().out.splitlines()
-    assert lines[-2].startswith("resumo: 83 fichas | 83 válidas | 0 reprovadas | 166 chamadas")
+    # Os problemas simulados do --fake (dev-030 reprovado depois de 2 novas tentativas, e as
+    # dúvidas 'baixa' de dev-005 e dev-019) aparecem já na primeira linha.
+    assert "modo direto (API falsa, com problemas simulados em dev-005, dev-019, dev-030)" in lines
+    assert lines[-2].startswith("resumo: 83 fichas | 82 válidas | 1 reprovadas | 168 chamadas")
     # O custo de cada chamada sai impresso logo depois da resposta.
-    assert sum("| cost: $" in line for line in lines) == 166
+    assert sum("| cost: $" in line for line in lines) == 168
     conn = db.connect(db_file)
     valid = conn.execute("SELECT COUNT(*) FROM produtos WHERE extracao = 'valido'").fetchone()[0]
-    assert valid == 83
+    assert valid == 82
     assert db.pending_sheets(conn) == []
-    # No fim, o roteamento: nenhum produto fica sem destino.
-    assert lines[-1].startswith("roteamento: 83 produtos | ")
+    # No fim, o roteamento: nenhum produto fica sem destino, e a fila tem os três motivos.
+    assert lines[-1] == (
+        "roteamento: 83 produtos | 71 no catálogo"
+        " | 12 na revisão (1 reprovado, 2 dúvida baixa, 9 auditoria)"
+    )
     assert conn.execute("SELECT COUNT(*) FROM produtos WHERE destino IS NULL").fetchone()[0] == 0

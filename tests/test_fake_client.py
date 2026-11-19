@@ -154,10 +154,13 @@ def test_cut_until_max_tokens_is_raised():
     assert classification.stop_reason == "tool_use"
 
 
-def test_injected_doubt():
-    client = FakeAPI(doubts={"dev-001": ("tdp_w", "baixa")}).client
+def test_injected_doubts():
+    client = FakeAPI(doubts={"dev-001": {"tdp_w": "baixa", "clock_base_ghz": "media"}}).client
     data = tool_use(client.messages.create(**extract("dev-001"))).input
-    assert data["duvidas"] == [{"campo": "tdp_w", "nivel": "baixa", "motivo": DOUBT_REASON}]
+    assert data["duvidas"] == [
+        {"campo": "tdp_w", "nivel": "baixa", "motivo": DOUBT_REASON},
+        {"campo": "clock_base_ghz", "nivel": "media", "motivo": DOUBT_REASON},
+    ]
     assert validate_product("processador", data, SHEETS["dev-001"]["texto"], doubts=True) == []
 
 

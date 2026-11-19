@@ -144,7 +144,7 @@ def processed_dev(tmp_path):
     api = FakeAPI(
         wrong_always={"dev-030"},
         wrong_first={"dev-031"},
-        doubts={"dev-001": ("tdp_w", "media"), "dev-002": ("nucleos", "baixa")},
+        doubts={"dev-001": {"tdp_w": "media"}, "dev-002": {"nucleos": "baixa"}},
     )
     extract.process(api.client, conn)
     route.route(conn)

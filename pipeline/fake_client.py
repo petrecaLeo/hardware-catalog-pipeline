@@ -28,7 +28,7 @@ Erros injetados, por id de ficha ('dev-007', 'hold-012'):
   null em 'outro'), que a regra pega. A conversa de correção recebe o gabarito certo;
 - `cut`: a extração vem cortada (`stop_reason="max_tokens"`, sem `duvidas`) enquanto o
   `max_tokens` não passar de `EXTRACT_MAX_TOKENS`;
-- `doubts`: `{id: (campo, nivel)}`, uma dúvida na extração;
+- `doubts`: `{id: {campo: nivel}}`, as dúvidas da extração (uma por campo, como na API real);
 - `errored` / `expired`: no lote, o primeiro pedido da ficha volta com esse resultado e o reenvio
   igual passa;
 - `out_of_order`: os resultados do lote vêm na ordem inversa à dos pedidos;
@@ -211,10 +211,10 @@ class FakeAPI:
             sheet_id in self.wrong_first and not _is_correction(messages)
         ):
             fields["garantia_meses"] = WRONG_WARRANTY
-        doubts = []
-        if sheet_id in self.doubts:
-            field, level = self.doubts[sheet_id]
-            doubts.append({"campo": field, "nivel": level, "motivo": DOUBT_REASON})
+        doubts = [
+            {"campo": field, "nivel": level, "motivo": DOUBT_REASON}
+            for field, level in self.doubts.get(sheet_id, {}).items()
+        ]
         return fields | {"duvidas": doubts}
 
     # --- Lotes.

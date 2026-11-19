@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <!-- Só arquivos deste servidor: nada de fora, nem script embutido. -->
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; img-src 'self' data:">
+  <title>Revisão do catálogo</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="style.css">
+  <script type="module" src="app.js"></script>
+</head>
+<body>
+  <a class="skip-link" href="#conteudo">Pular para o conteúdo</a>
+
+  <header class="topbar">
+    <div class="topbar-row">
+      <p class="brand">Revisão do catálogo</p>
+      <!-- Cada aba é um link aqui e uma <section data-view> em <main>. -->
+      <nav class="tabs" aria-label="Seções">
+        <a href="#revisao" data-tab="revisao">
+          Revisão <span class="tab-count" id="tab-count-revisao"></span>
+        </a>
+        <a href="#catalogo" data-tab="catalogo">
+          Catálogo <span class="tab-count" id="tab-count-catalogo"></span>
+        </a>
+      </nav>
+    </div>
+  </header>
+
+  <section class="summary" aria-label="Resumo">
+    <p class="stat"><strong id="stat-catalogo">–</strong> no catálogo</p>
+    <p class="stat"><strong id="stat-fila">–</strong> na fila <span class="tags" id="stat-motivos"></span></p>
+    <p class="stat"><strong id="stat-rejeitados">–</strong> rejeitados</p>
+    <p class="stat stat-round">
+      Última rodada: <strong id="stat-rodada-custo">–</strong>
+      <span id="stat-rodada-detalhe"></span>
+    </p>
+  </section>
+
+  <p class="status" id="status" role="status" aria-live="polite"></p>
+
+  <main id="conteudo" tabindex="-1">
+    <section class="view view-review" data-view="revisao" aria-label="Revisão">
+      <aside class="column queue-column" aria-labelledby="queue-title">
+        <h2 class="column-title" id="queue-title">Fila <span class="count" id="queue-count"></span></h2>
+        <ul class="queue" id="queue"></ul>
+        <p class="empty" id="queue-empty" hidden>Fila vazia: nenhuma ficha espera revisão.</p>
+      </aside>
+
+      <article class="column sheet-column" id="sheet" aria-labelledby="sheet-title">
+        <p class="empty" id="sheet-empty">Escolha uma ficha na fila.</p>
+        <div id="sheet-body" hidden>
+          <header class="sheet-head">
+            <h2 class="sheet-title" id="sheet-title" tabindex="-1"></h2>
+            <p class="sheet-meta" id="sheet-meta"></p>
+            <ul class="tags" id="sheet-reasons" aria-label="Motivos da revisão"></ul>
+          </header>
+          <h3 class="paper-label" id="paper-label">Ficha do fornecedor, como chegou</h3>
+          <pre class="paper" id="sheet-text"></pre>
+          <details class="attempts">
+            <summary id="attempts-summary"></summary>
+            <div class="table-wrap">
+              <table class="attempts-table">
+                <thead>
+                  <tr>
+                    <th scope="col">Etapa</th>
+                    <th scope="col">Rodada</th>
+                    <th scope="col" class="num">Tokens (entrada / saída / cache)</th>
+                    <th scope="col" class="num">Custo</th>
+                    <th scope="col">Erro</th>
+                  </tr>
+                </thead>
+                <tbody id="attempts"></tbody>
+              </table>
+            </div>
+          </details>
+        </div>
+      </article>
+
+      <section class="column form-column" aria-labelledby="form-title">
+        <form id="form" novalidate hidden>
+          <h2 class="column-title" id="form-title">Campos extraídos</h2>
+          <p class="form-note" id="form-note"></p>
+          <div class="alert" id="form-errors" role="alert" hidden>
+            <p class="alert-title" id="form-errors-title"></p>
+            <ul id="form-errors-list"></ul>
+          </div>
+          <div class="fields" id="fields"></div>
+          <div class="actions">
+            <p class="actions-hint" id="actions-hint"></p>
+            <div class="actions-buttons">
+              <button type="button" class="button button-reject" id="reject">Rejeitar</button>
+              <button type="button" class="button" id="approve">Aprovar</button>
+              <button type="button" class="button" id="save-approve">Salvar e aprovar</button>
+            </div>
+          </div>
+        </form>
+      </section>
+    </section>
+
+    <section class="view view-catalog" data-view="catalogo" aria-labelledby="catalog-title" hidden>
+      <div class="catalog-head">
+        <h2 class="column-title" id="catalog-title">
+          Catálogo <span class="count" id="catalog-count"></span>
+        </h2>
+        <label class="filter">
+          <span>Filtrar</span>
+          <input type="search" id="catalog-filter" placeholder="nome, marca, categoria ou origem"
+            autocomplete="off">
+        </label>
+      </div>
+      <div class="table-wrap">
+        <table class="catalog-table">
+          <thead>
+            <tr>
+              <th scope="col">Produto</th>
+              <th scope="col">Categoria</th>
+              <th scope="col" class="optional">Marca</th>
+              <th scope="col" class="num">Preço</th>
+              <th scope="col" class="num optional">Garantia</th>
+            </tr>
+          </thead>
+          <tbody id="catalog"></tbody>
+        </table>
+      </div>
+      <p class="empty" id="catalog-empty" hidden>Nenhum produto no catálogo ainda.</p>
+    </section>
+  </main>
+</body>
+</html>

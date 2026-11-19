@@ -6,13 +6,25 @@ from collections import Counter
 from pathlib import Path
 
 import anthropic
+import uvicorn
 
+from api.main import HOST, PORT, create_app
 from pipeline import batch, db, evaluate, extract, route
 from pipeline.config import BATCH_POLL_SECONDS, DB_FILE, MODE_NAMES
 from pipeline.fake_client import FakeAPI
 from pipeline.sheets import SETS, load_sheets, sheets_path
 
 REASON_NAMES = {"reprovado": "reprovado", "duvida_baixa": "dúvida baixa", "auditoria": "auditoria"}
+# O `--fake` simula alguns problemas, para a fila de revisão ter um exemplo de cada motivo, além
+# da auditoria: uma garantia errada que a correção não conserta (reprovado) e dúvidas do modelo,
+# 'baixa' em campo importante (vai para a fila) e 'media' (só aparece destacada na tela).
+FAKE_PROBLEMS = {
+    "wrong_always": {"dev-030"},
+    "doubts": {
+        "dev-005": {"tdp_w": "baixa"},
+        "dev-019": {"consumo_w": "baixa", "comprimento_mm": "media"},
+    },
+}
 
 
 def read_sheets(path: Path) -> tuple[str, list[tuple[str, str]]]:
@@ -43,8 +55,11 @@ def ingest(conn, paths: list[Path]) -> None:
 
 
 def process(conn, in_batch: bool, conjunto: str | None, limit: int | None, fake: bool) -> None:
-    client = FakeAPI().client if fake else anthropic.Anthropic()
-    api = "API falsa" if fake else "API real"
+    client = FakeAPI(**FAKE_PROBLEMS).client if fake else anthropic.Anthropic()
+    api = "API real"
+    if fake:
+        simulated = sorted({*FAKE_PROBLEMS["wrong_always"], *FAKE_PROBLEMS["doubts"]})
+        api = f"API falsa, com problemas simulados em {', '.join(simulated)}"
     if in_batch:
         print(f"modo lote ({api})")
         # A API falsa responde na hora: não há o que esperar entre as consultas.
@@ -129,6 +144,12 @@ def run_eval(conn, conjunto: str, compare: list[Path], save: bool) -> None:
         print(f"salvo em {evaluate.save(conjunto, text)}")
 
 
+def serve(db_file: Path) -> None:
+    """A tela de revisão, só para esta máquina (127.0.0.1)."""
+    print(f"tela de revisão em http://{HOST}:{PORT} (banco: {db_file}; Ctrl-C para parar)")
+    uvicorn.run(create_app(db_file), host=HOST, port=PORT)
+
+
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(description="Pipeline de entrada de catálogo de hardware.")
     parser.add_argument(
@@ -156,7 +177,9 @@ def main(argv: list[str] | None = None) -> None:
     )
     process_parser.add_argument("--limite", type=int, metavar="N", help="no máximo N fichas")
     process_parser.add_argument(
-        "--fake", action="store_true", help="usa a API falsa: sem chave e sem custo"
+        "--fake",
+        action="store_true",
+        help="usa a API falsa: sem chave e sem custo, com alguns problemas simulados para a fila",
     )
 
     commands.add_parser(
@@ -186,7 +209,14 @@ def main(argv: list[str] | None = None) -> None:
         help="grava em docs/results.md (holdout) ou docs/results-dev.md (dev)",
     )
 
+    commands.add_parser(
+        "serve", help=f"abre a tela de revisão em http://{HOST}:{PORT}, só nesta máquina"
+    )
+
     args = parser.parse_args(argv)
+    if args.command == "serve":
+        serve(args.db)
+        return
     conn = db.connect(args.db)
     try:
         if args.command == "ingest":

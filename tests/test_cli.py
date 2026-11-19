@@ -1,6 +1,8 @@
 import subprocess
 import sys
 
+from fastapi.testclient import TestClient
+
 import cli
 from pipeline import db
 from pipeline.config import ROOT_DIR
@@ -69,3 +71,19 @@ def test_ingest_txt_folder(tmp_path, capsys):
         ("inbox", "fonte.txt", "Fonte 650W 80 Plus Bronze R$ 399,90"),
         ("inbox", "ssd.txt", "SSD NVMe 1TB PCIe 4.0, 7000 MB/s"),
     ]
+
+
+def test_serve_runs_the_review_page_only_on_this_machine(tmp_path, monkeypatch):
+    runs = []
+    monkeypatch.setattr(cli.uvicorn, "run", lambda app, **options: runs.append((app, options)))
+    db_file = tmp_path / "demo.db"
+
+    cli.main(["--db", str(db_file), "serve"])
+
+    [(app, options)] = runs
+    assert options == {"host": "127.0.0.1", "port": 8000}
+    # O app é o da revisão, com o banco pedido e a tela.
+    client = TestClient(app, base_url="http://127.0.0.1:8000")
+    assert client.get("/api/summary").json()["catalogo"] == 0
+    assert db_file.is_file()
+    assert client.get("/").status_code == 200

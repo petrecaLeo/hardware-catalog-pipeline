@@ -74,9 +74,9 @@ def test_each_reason_with_the_fake_api(tmp_path):
     api = FakeAPI(
         wrong_always={"dev-030"},
         doubts={
-            "dev-001": ("tdp_w", "baixa"),
-            "dev-002": ("tdp_w", "media"),
-            "dev-003": ("cooler_incluso", "baixa"),
+            "dev-001": {"tdp_w": "baixa"},
+            "dev-002": {"tdp_w": "media"},
+            "dev-003": {"cooler_incluso": "baixa"},
         },
     )
     conn = extracted(tmp_path, api, "dev-001", "dev-002", "dev-003", "dev-030", "dev-031")
@@ -215,7 +215,7 @@ def database_table(conn):
 
 def test_status_matches_the_database(tmp_path, capsys):
     db_file = tmp_path / "catalog.db"
-    api = FakeAPI(wrong_always={"dev-030"}, doubts={"dev-001": ("tdp_w", "baixa")})
+    api = FakeAPI(wrong_always={"dev-030"}, doubts={"dev-001": {"tdp_w": "baixa"}})
     conn = db.connect(db_file)
     db.add_sheets(conn, "dev", [(sheet_id, sheet["texto"]) for sheet_id, sheet in SHEETS.items()])
     extract.process(api.client, conn, limit=10)

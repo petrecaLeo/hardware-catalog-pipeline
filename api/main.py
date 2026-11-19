@@ -1,5 +1,5 @@
 """API da revisão humana: a fila, a ficha com a extração, aprovar (com edições) ou rejeitar, o
-catálogo e o resumo.
+catálogo e o resumo. A tela (web/) é servida na raiz, pelo mesmo servidor.
 
 O `{id}` das rotas é o id da ficha no banco (`fichas.id`), que também é o id do produto. O
 `id_origem` ('dev-030', 'fonte.txt') vem junto nas respostas só para mostrar: ele não é único.
@@ -19,7 +19,8 @@ por 127.0.0.1 com DNS rebinding manda o nome dele no Host). Os POST só aceitam 
 de outro site aberto no navegador manda um POST sem perguntar nada, mas um POST em JSON para outra
 origem passa antes pela permissão do CORS, que esta API não dá.
 
-Uso: `create_app(db_file)`. Cada pedido abre a sua conexão com o banco e fecha no fim.
+Uso: `create_app(db_file)` (`cli.py serve` roda em 127.0.0.1:8000). Cada pedido abre a sua conexão
+com o banco e fecha no fim.
 """
 
 import json
@@ -31,16 +32,19 @@ from typing import Literal, get_args, get_origin
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict
 from starlette.middleware.trustedhost import TrustedHostMiddleware
 
 from pipeline import db, route
-from pipeline.config import DB_FILE
+from pipeline.config import DB_FILE, ROOT_DIR
 from pipeline.rules import validate_product
 from pipeline.schemas import PRODUCT_MODELS
 
 HOST = "127.0.0.1"
+PORT = 8000
 ALLOWED_HOSTS = [HOST, "localhost"]
+WEB_DIR = ROOT_DIR / "web"
 
 # O tipo de cada campo no formulário. O esquema é strict: o número vai como número ("8" não vale).
 FIELD_KINDS = {str: "texto", int: "inteiro", float: "numero", bool: "booleano"}
@@ -210,4 +214,6 @@ def create_app(db_file: Path | str = DB_FILE) -> FastAPI:
             "custo": {"ultima_rodada": last_round, "total": db.total_cost(conn)},
         }
 
+    # A tela, por último: as rotas da API acima têm a preferência. "/" abre o index.html.
+    app.mount("/", StaticFiles(directory=WEB_DIR, html=True), name="web")
     return app

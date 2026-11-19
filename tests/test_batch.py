@@ -277,13 +277,15 @@ def test_cli_processes_all_sheets_in_batches_with_the_fake_api(tmp_path, capsys)
     cli.main(["--db", db_file, "process", "--lote", "--fake"])
 
     lines = capsys.readouterr().out.splitlines()
-    assert lines[-2].startswith("resumo: 83 fichas | 83 válidas | 0 reprovadas | 166 chamadas")
-    assert sum("| cost: $" in line for line in lines) == 166
+    # Os problemas simulados do --fake, como no modo direto.
+    assert lines[-2].startswith("resumo: 83 fichas | 82 válidas | 1 reprovadas | 168 chamadas")
+    assert sum("| cost: $" in line for line in lines) == 168
     conn = db.connect(db_file)
     assert db.pending_sheets(conn) == []
     # No fim, o roteamento: nenhum produto fica sem destino.
     assert lines[-1].startswith("roteamento: 83 produtos | ")
     assert conn.execute("SELECT COUNT(*) FROM produtos WHERE destino IS NULL").fetchone()[0] == 0
+    # Classificação, extração e as 2 novas tentativas do dev-030.
     assert [tuple(row) for row in conn.execute("SELECT status, COUNT(*) FROM lotes")] == [
-        ("concluido", 2)
+        ("concluido", 4)
     ]

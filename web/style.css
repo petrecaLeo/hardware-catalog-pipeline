@@ -1,0 +1,860 @@
+/* Tela de revisão. Sem fontes de fora: a do sistema, e a monoespaçada do sistema só no texto
+   original da ficha. Cores: o verde de placa de circuito no topo; amarelo e vermelho só para as
+   dúvidas e os erros, sempre com o texto junto ("dúvida média", "dúvida baixa"). */
+
+:root {
+  --board: #0e4a38;
+  --board-ink: #f1f6f2;
+  --board-soft: #bcd6c9;
+  --bench: #e7ece8;
+  --paper: #ffffff;
+  --ink: #17211c;
+  --muted: #4d5b54;
+  --line: #c6d0ca;
+  --line-soft: #e1e7e3;
+  --control: #74827b;
+  --accent: #0f6b4f;
+  --accent-dark: #0a5039;
+  --accent-soft: #e2f0e8;
+  --focus: #1b5fc1;
+  --media-bg: #fff4d4;
+  --media-line: #b7800a;
+  --media-ink: #4d3500;
+  --baixa-bg: #fde9e6;
+  --baixa-line: #c2392e;
+  --baixa-ink: #861b12;
+  --audit-bg: #e4e8fa;
+  --audit-ink: #2c3891;
+  --danger: #a3271c;
+  --font: system-ui, -apple-system, "Segoe UI", Roboto, "Noto Sans", "Helvetica Neue", Arial, sans-serif;
+  --mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", "Roboto Mono", "DejaVu Sans Mono", Menlo,
+    Consolas, monospace;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+
+[hidden] {
+  display: none !important;
+}
+
+body {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  background: var(--bench);
+  color: var(--ink);
+  font: 15px/1.5 var(--font);
+  font-variant-numeric: tabular-nums;
+}
+
+h2,
+h3,
+p {
+  margin: 0;
+}
+
+:focus-visible {
+  outline: 3px solid var(--focus);
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: 12px;
+  top: -48px;
+  z-index: 10;
+  padding: 8px 12px;
+  background: var(--paper);
+  color: var(--ink);
+  border-radius: 4px;
+}
+
+.skip-link:focus {
+  top: 8px;
+}
+
+.muted {
+  color: var(--muted);
+}
+
+/* --- Topo: nome, abas e resumo. */
+
+.topbar {
+  background: var(--board);
+  color: var(--board-ink);
+  padding: 0 24px;
+}
+
+.topbar :focus-visible {
+  outline-color: var(--board-ink);
+}
+
+.topbar-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  column-gap: 40px;
+  min-height: 52px;
+}
+
+.brand {
+  font-size: 17px;
+  font-weight: 650;
+  letter-spacing: 0.01em;
+}
+
+.tabs {
+  display: flex;
+  gap: 4px;
+  align-self: stretch;
+}
+
+.tabs a {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 14px;
+  color: var(--board-soft);
+  font-weight: 600;
+  text-decoration: none;
+  border-bottom: 3px solid transparent;
+  border-top: 3px solid transparent;
+}
+
+.tabs a:hover {
+  color: var(--board-ink);
+}
+
+.tabs a[aria-current="page"] {
+  color: var(--board-ink);
+  border-bottom-color: #8fd5b0;
+}
+
+.tab-count {
+  min-width: 24px;
+  padding: 0 7px;
+  border-radius: 10px;
+  background: rgb(255 255 255 / 0.14);
+  color: var(--board-ink);
+  font-size: 13px;
+  text-align: center;
+}
+
+.tab-count:empty {
+  display: none;
+}
+
+.summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 32px;
+  padding: 10px 24px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line);
+  color: var(--muted);
+  font-size: 14px;
+}
+
+.stat strong {
+  color: var(--ink);
+  font-size: 19px;
+  font-weight: 700;
+  margin-right: 2px;
+}
+
+.stat .tags {
+  display: inline-flex;
+  margin-left: 6px;
+  vertical-align: 2px;
+}
+
+.stat-round {
+  margin-left: auto;
+}
+
+.stat-round strong {
+  font-size: 15px;
+}
+
+/* --- Etiquetas: motivos da fila e marcas dos campos. */
+
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.tag,
+.badge {
+  display: inline-block;
+  padding: 0 7px;
+  border-radius: 4px;
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 20px;
+  white-space: nowrap;
+}
+
+.tag-reprovado {
+  background: var(--danger);
+  color: #ffffff;
+}
+
+.tag-duvida_baixa {
+  background: var(--baixa-bg);
+  color: var(--baixa-ink);
+  box-shadow: inset 0 0 0 1px var(--baixa-line);
+}
+
+.tag-auditoria {
+  background: var(--audit-bg);
+  color: var(--audit-ink);
+}
+
+.tag-zero {
+  color: var(--muted);
+  box-shadow: inset 0 0 0 1px var(--line);
+}
+
+/* Dúvida: etiqueta com contorno (na fila e no campo). Reprovado: vermelho cheio. */
+.badge-media {
+  background: var(--paper);
+  color: var(--media-ink);
+  box-shadow: inset 0 0 0 1px var(--media-line);
+}
+
+.badge-baixa {
+  background: var(--paper);
+  color: var(--baixa-ink);
+  box-shadow: inset 0 0 0 1px var(--baixa-line);
+}
+
+.badge-changed {
+  background: var(--accent-soft);
+  color: var(--accent-dark);
+  box-shadow: inset 0 0 0 1px #9cc9b2;
+}
+
+.origin {
+  display: inline-block;
+  padding: 0 6px;
+  border: 1px solid var(--line);
+  border-radius: 3px;
+  background: var(--bench);
+  color: var(--ink);
+  font-size: 12px;
+  line-height: 18px;
+}
+
+/* --- Revisão: três colunas (fila, ficha, campos). */
+
+.column-title {
+  font-size: 15px;
+  font-weight: 700;
+}
+
+.count {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.empty {
+  padding: 24px;
+  color: var(--muted);
+}
+
+.queue-column {
+  background: var(--paper);
+  border-right: 1px solid var(--line);
+}
+
+.queue-column .column-title {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 14px 16px 10px;
+  background: var(--paper);
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.queue {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.queue-item {
+  display: grid;
+  gap: 4px;
+  padding: 11px 16px 12px 13px;
+  border-left: 3px solid transparent;
+  border-bottom: 1px solid var(--line-soft);
+  color: inherit;
+  text-decoration: none;
+}
+
+.queue-item:hover {
+  background: #f3f6f4;
+}
+
+.queue-item[aria-current="true"] {
+  background: var(--accent-soft);
+  border-left-color: var(--accent);
+}
+
+.queue-item:focus-visible {
+  outline-offset: -3px;
+}
+
+.queue-name {
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.queue-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sheet-column {
+  padding: 22px 32px 32px;
+}
+
+.sheet-head {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 20px;
+}
+
+.sheet-title {
+  font-size: 22px;
+  font-weight: 700;
+  line-height: 1.25;
+}
+
+.sheet-title:focus {
+  outline: none;
+}
+
+.sheet-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  font-size: 14px;
+}
+
+.paper-label {
+  margin-bottom: 6px;
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+/* O texto como chegou do fornecedor: quebras de linha e espaços preservados. */
+.paper {
+  max-width: 80ch;
+  margin: 0;
+  padding: 20px 24px;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-top: 4px solid var(--board);
+  border-radius: 3px;
+  font: 14px/1.6 var(--mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.attempts {
+  max-width: 80ch;
+  margin-top: 18px;
+  font-size: 13px;
+}
+
+.attempts summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.table-wrap {
+  overflow-x: auto;
+  background: var(--paper);
+  border: 1px solid var(--line);
+}
+
+.attempts .table-wrap {
+  margin-top: 8px;
+}
+
+.attempts-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.attempts-table th,
+.attempts-table td {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: top;
+}
+
+.attempts-table th {
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.num {
+  text-align: right !important;
+  white-space: nowrap;
+}
+
+.attempt-error {
+  color: var(--danger);
+}
+
+/* --- Revisão: o formulário. */
+
+.form-column {
+  background: var(--paper);
+  border-left: 1px solid var(--line);
+}
+
+.form-column form {
+  display: flex;
+  flex-direction: column;
+  min-height: 100%;
+  padding: 18px 24px 0;
+}
+
+.form-note {
+  margin-top: 4px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.alert {
+  margin-top: 14px;
+  padding: 12px 14px;
+  border: 1px solid var(--baixa-line);
+  border-left-width: 4px;
+  border-radius: 3px;
+  background: var(--baixa-bg);
+  color: var(--baixa-ink);
+  font-size: 14px;
+}
+
+.alert-title {
+  font-weight: 700;
+}
+
+.alert ul {
+  margin: 6px 0 0;
+  padding-left: 18px;
+}
+
+.alert li + li {
+  margin-top: 4px;
+}
+
+.link {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  font-weight: 700;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.fields {
+  display: grid;
+  gap: 2px;
+  margin: 14px -12px 0;
+}
+
+.field {
+  display: grid;
+  gap: 4px;
+  padding: 7px 12px 8px 9px;
+  border-left: 3px solid transparent;
+  border-radius: 0 3px 3px 0;
+}
+
+.field[data-doubt="media"] {
+  background: var(--media-bg);
+  border-left-color: var(--media-line);
+}
+
+.field[data-doubt="baixa"] {
+  background: var(--baixa-bg);
+  border-left-color: var(--baixa-line);
+}
+
+.field-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 6px;
+}
+
+.field-head label {
+  margin-right: auto;
+  font-size: 14px;
+  font-weight: 650;
+}
+
+.field input,
+.field select {
+  width: 100%;
+  min-height: 36px;
+  padding: 6px 10px;
+  border: 1px solid var(--control);
+  border-radius: 4px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+}
+
+.field[data-doubt="media"] :is(input, select) {
+  border-color: var(--media-line);
+}
+
+.field[data-doubt="baixa"] :is(input, select) {
+  border-color: var(--baixa-line);
+}
+
+.field.has-error :is(input, select) {
+  border: 2px solid var(--danger);
+  padding: 5px 9px;
+}
+
+.field-error {
+  color: var(--danger);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.field-error::before {
+  content: "Erro: ";
+}
+
+.doubt-reason {
+  font-size: 13px;
+}
+
+.field[data-doubt="media"] .doubt-reason {
+  color: var(--media-ink);
+}
+
+.field[data-doubt="baixa"] .doubt-reason {
+  color: var(--baixa-ink);
+}
+
+/* A descrição do campo aparece ao editar, e sempre nos campos com dúvida ou erro. */
+.field-help {
+  display: none;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.45;
+}
+
+.field:focus-within .field-help,
+.field[data-doubt] .field-help,
+.field.has-error .field-help {
+  display: block;
+}
+
+.actions {
+  position: sticky;
+  bottom: 0;
+  margin: auto -24px 0;
+  padding: 12px 24px 16px;
+  background: var(--paper);
+  border-top: 1px solid var(--line);
+}
+
+.actions-hint {
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: 13px;
+  /* Altura inteira: com meio pixel, a barra presa embaixo deixa ver uma linha do campo de trás. */
+  line-height: 20px;
+}
+
+.actions-buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.button {
+  min-height: 40px;
+  padding: 0 16px;
+  border: 1px solid var(--control);
+  border-radius: 6px;
+  background: var(--paper);
+  color: var(--ink);
+  font: inherit;
+  font-weight: 650;
+  cursor: pointer;
+}
+
+.button:hover:not(:disabled) {
+  background: #f1f4f2;
+}
+
+.button-primary {
+  border-color: var(--accent);
+  background: var(--accent);
+  color: #ffffff;
+}
+
+.button-primary:hover:not(:disabled) {
+  background: var(--accent-dark);
+}
+
+.button-reject {
+  margin-right: auto;
+  border-color: var(--danger);
+  color: var(--danger);
+}
+
+.button-reject:hover:not(:disabled) {
+  background: var(--baixa-bg);
+}
+
+.button:disabled {
+  border-color: var(--line);
+  background: var(--paper);
+  color: #8a958f;
+  cursor: not-allowed;
+}
+
+/* --- Catálogo. */
+
+.view-catalog {
+  padding: 22px 32px 40px;
+}
+
+.catalog-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  justify-content: space-between;
+  gap: 12px 24px;
+  margin-bottom: 14px;
+}
+
+.catalog-head .column-title {
+  font-size: 22px;
+}
+
+.filter {
+  display: grid;
+  gap: 4px;
+  width: min(100%, 340px);
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--muted);
+}
+
+.filter input {
+  min-height: 38px;
+  padding: 6px 10px;
+  border: 1px solid var(--control);
+  border-radius: 4px;
+  font: 15px var(--font);
+  color: var(--ink);
+}
+
+.catalog-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.catalog-table th,
+.catalog-table td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line-soft);
+  text-align: left;
+  vertical-align: top;
+}
+
+.catalog-table th {
+  color: var(--muted);
+  font-size: 13px;
+  font-weight: 600;
+  background: #f5f7f6;
+}
+
+.product-name {
+  margin-right: 8px;
+  font-weight: 600;
+}
+
+.catalog-table .badge {
+  margin-left: 6px;
+}
+
+.just-approved td {
+  background: var(--accent-soft);
+}
+
+/* --- Avisos (aprovada, rejeitada, erro do servidor): embaixo, à esquerda, sobre o fim da fila; no
+   celular, em cima, para não cobrir os botões. */
+
+.status {
+  position: fixed;
+  bottom: 16px;
+  left: 16px;
+  z-index: 5;
+  max-width: min(calc(100% - 32px), 480px);
+  padding: 10px 16px;
+  border-radius: 6px;
+  background: var(--ink);
+  color: #ffffff;
+  font-weight: 600;
+  box-shadow: 0 6px 20px rgb(23 33 28 / 0.25);
+}
+
+.status[data-kind="error"] {
+  background: var(--danger);
+}
+
+.status:empty {
+  display: none;
+}
+
+/* --- Computador: o topo fica parado e cada aba rola sozinha; na revisão, cada coluna rola. */
+
+@media (min-width: 1081px) {
+  body {
+    height: 100vh;
+    overflow: hidden;
+  }
+
+  main {
+    flex: 1;
+    min-height: 0;
+  }
+
+  .view {
+    height: 100%;
+    overflow-y: auto;
+  }
+
+  .view-review {
+    display: grid;
+    grid-template-columns: 300px minmax(0, 1fr) minmax(380px, 460px);
+  }
+
+  .column {
+    min-height: 0;
+    overflow-y: auto;
+  }
+}
+
+/* --- Celular e tela estreita: uma coluna só, na ordem fila, ficha, campos. */
+
+@media (max-width: 1080px) {
+  .queue-column {
+    max-height: 320px;
+    overflow-y: auto;
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .form-column {
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+
+  .stat-round {
+    margin-left: 0;
+  }
+
+  .status {
+    top: 8px;
+    bottom: auto;
+  }
+}
+
+@media (max-width: 640px) {
+  .topbar,
+  .summary {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+
+  .topbar-row {
+    column-gap: 16px;
+  }
+
+  .tabs {
+    min-height: 44px;
+  }
+
+  .tabs a {
+    padding: 0 10px;
+  }
+
+  .summary {
+    gap: 4px 18px;
+  }
+
+  .sheet-column,
+  .view-catalog {
+    padding: 18px 16px 28px;
+  }
+
+  .paper {
+    padding: 14px 14px;
+    font-size: 13px;
+  }
+
+  .form-column form {
+    padding: 16px 16px 0;
+  }
+
+  .actions {
+    margin: auto -16px 0;
+    padding: 12px 16px 14px;
+  }
+
+  .optional {
+    display: none;
+  }
+
+  .actions-buttons {
+    gap: 6px;
+  }
+
+  .button {
+    padding: 0 12px;
+    font-size: 14px;
+  }
+
+  .catalog-table {
+    font-size: 14px;
+  }
+
+  .catalog-table th,
+  .catalog-table td {
+    padding: 9px 8px;
+  }
+}
